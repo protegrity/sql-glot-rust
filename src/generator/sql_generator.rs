@@ -448,7 +448,9 @@ impl Generator {
                 self.write(")");
                 if let Some(alias) = alias {
                     self.write(" ");
-                    self.write_keyword("AS ");
+                    if !self.omit_table_alias_as() {
+                        self.write_keyword("AS ");
+                    }
                     self.write(alias);
                 }
             }
@@ -459,7 +461,9 @@ impl Generator {
                 self.write(")");
                 if let Some(alias) = alias {
                     self.write(" ");
-                    self.write_keyword("AS ");
+                    if !self.omit_table_alias_as() {
+                        self.write_keyword("AS ");
+                    }
                     self.write(alias);
                 }
             }
@@ -477,7 +481,9 @@ impl Generator {
                 self.write(")");
                 if let Some(alias) = alias {
                     self.write(" ");
-                    self.write_keyword("AS ");
+                    if !self.omit_table_alias_as() {
+                        self.write_keyword("AS ");
+                    }
                     self.write(alias);
                 }
                 if *with_offset {
@@ -507,7 +513,9 @@ impl Generator {
                 self.write("))");
                 if let Some(alias) = alias {
                     self.write(" ");
-                    self.write_keyword("AS ");
+                    if !self.omit_table_alias_as() {
+                        self.write_keyword("AS ");
+                    }
                     self.write(alias);
                 }
             }
@@ -533,7 +541,9 @@ impl Generator {
                 self.write("))");
                 if let Some(alias) = alias {
                     self.write(" ");
-                    self.write_keyword("AS ");
+                    if !self.omit_table_alias_as() {
+                        self.write_keyword("AS ");
+                    }
                     self.write(alias);
                 }
             }
@@ -554,6 +564,11 @@ impl Generator {
         }
     }
 
+    /// Returns true if the target dialect forbids `AS` in table aliases.
+    fn omit_table_alias_as(&self) -> bool {
+        matches!(self.dialect, Some(Dialect::Oracle))
+    }
+
     fn gen_table_ref(&mut self, table: &TableRef) {
         if let Some(catalog) = &table.catalog {
             self.write(catalog);
@@ -566,7 +581,9 @@ impl Generator {
         self.write_quoted(&table.name, table.name_quote_style);
         if let Some(alias) = &table.alias {
             self.write(" ");
-            self.write_keyword("AS ");
+            if !self.omit_table_alias_as() {
+                self.write_keyword("AS ");
+            }
             self.write(alias);
         }
     }

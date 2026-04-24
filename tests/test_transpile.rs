@@ -1764,3 +1764,67 @@ fn test_time_format_identity_postgres() {
         Dialect::Postgres,
     );
 }
+
+#[test]
+fn test_oracle_omits_as_in_table_alias() {
+    // Oracle forbids AS between a table reference and its alias
+    validate_with_dialect(
+        "SELECT * FROM users AS u WHERE u.id = 1",
+        "SELECT * FROM users u WHERE u.id = 1",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_oracle_omits_as_in_join_table_alias() {
+    validate_with_dialect(
+        "SELECT a.name, b.email FROM accounts AS a INNER JOIN users AS b ON a.user_id = b.id",
+        "SELECT a.name, b.email FROM accounts a INNER JOIN users b ON a.user_id = b.id",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_oracle_omits_as_in_subquery_alias() {
+    validate_with_dialect(
+        "SELECT * FROM (SELECT id, name FROM users) AS sub WHERE sub.id > 10",
+        "SELECT * FROM (SELECT id, name FROM users) sub WHERE sub.id > 10",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_oracle_preserves_column_alias_as() {
+    // Column aliases should still use AS even for Oracle
+    validate_with_dialect(
+        "SELECT first_name AS fname, last_name AS lname FROM employees",
+        "SELECT first_name AS fname, last_name AS lname FROM employees",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_oracle_catalog_query_no_spurious_as() {
+    // Catalog query that already has no AS should not gain one
+    validate_with_dialect(
+        "SELECT U.* FROM ALL_USERS U WHERE (U.USERNAME IS NOT NULL)",
+        "SELECT U.* FROM ALL_USERS U WHERE (U.USERNAME IS NOT NULL)",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_non_oracle_keeps_table_alias_as() {
+    // Non-Oracle dialects should still emit AS
+    validate_with_dialect(
+        "SELECT * FROM users AS u",
+        "SELECT * FROM users AS u",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
