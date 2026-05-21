@@ -153,12 +153,7 @@ impl Generator {
         if comment.starts_with('#') {
             let is_mysql_target = matches!(
                 self.dialect,
-                Some(
-                    Dialect::Mysql
-                        | Dialect::Doris
-                        | Dialect::SingleStore
-                        | Dialect::StarRocks
-                )
+                Some(Dialect::Mysql | Dialect::Doris | Dialect::SingleStore | Dialect::StarRocks)
             );
             if !is_mysql_target {
                 return format!("--{}", &comment[1..]);
@@ -439,7 +434,11 @@ impl Generator {
                 self.write(table);
                 self.write(".*");
             }
-            SelectItem::Expr { expr, alias, alias_quote_style } => {
+            SelectItem::Expr {
+                expr,
+                alias,
+                alias_quote_style,
+            } => {
                 self.gen_expr(expr);
                 if let Some(alias) = alias {
                     self.write(" ");
@@ -453,7 +452,11 @@ impl Generator {
     fn gen_table_source(&mut self, source: &TableSource) {
         match source {
             TableSource::Table(table_ref) => self.gen_table_ref(table_ref),
-            TableSource::Subquery { query, alias, alias_quote_style } => {
+            TableSource::Subquery {
+                query,
+                alias,
+                alias_quote_style,
+            } => {
                 self.write("(");
                 self.gen_statement(query);
                 self.write(")");
@@ -465,7 +468,12 @@ impl Generator {
                     self.write_quoted(alias, *alias_quote_style);
                 }
             }
-            TableSource::TableFunction { name, args, alias, alias_quote_style } => {
+            TableSource::TableFunction {
+                name,
+                args,
+                alias,
+                alias_quote_style,
+            } => {
                 self.write(name);
                 self.write("(");
                 self.gen_expr_list(args);
@@ -2657,6 +2665,14 @@ impl Generator {
                 self.gen_expr(expr);
                 self.write(")");
             }
+            TypedFunction::GroupConcat {
+                exprs,
+                separator,
+                order_by,
+                distinct,
+            } => {
+                self.gen_group_concat(exprs, separator.as_deref(), order_by, *distinct);
+            }
 
             // ── Array ──────────────────────────────────────────────────
             TypedFunction::ArrayConcat { arrays } => {
@@ -2948,6 +2964,128 @@ impl Generator {
                 self.write(", ");
                 self.gen_expr(bit_length);
                 self.write(")");
+            }
+        }
+    }
+
+    /// Emit a `GROUP_CONCAT` / `STRING_AGG` / `LISTAGG` expression
+    /// appropriately for the active dialect.
+    fn gen_group_concat(
+        &mut self,
+        exprs: &[Expr],
+        separator: Option<&Expr>,
+        order_by: &[OrderByItem],
+        distinct: bool,
+    ) {
+        let dialect = self.dialect;
+        let is_sqlite = matches!(dialect, Some(Dialect::Sqlite));
+        let is_string_agg = matches!(
+            dialect,
+            Some(Dialect::Postgres)
+                | Some(Dialect::Redshift)
+                | Some(Dialect::BigQuery)
+                | Some(Dialect::Tsql)
+                | Some(Dialect::Fabric)
+                | Some(Dialect::DuckDb)
+        );
+        let is_listagg = matches!(dialect, Some(Dialect::Oracle) | Some(Dialect::Snowflake));
+
+        if is_string_agg {
+            // STRING_AGG(expr, sep [ORDER BY ...])
+            self.write_keyword("STRING_AGG(");
+            if distinct {
+                self.write_keyword("DISTINCT ");
+            }
+            self.gen_group_concat_exprs(exprs);
+            self.write(", ");
+            match separator {
+                Some(s) => self.gen_expr(s),
+                None => self.write("','"),
+            }
+            if !order_by.is_empty() {
+                self.write(" ");
+                self.gen_group_concat_order_by(order_by);
+            }
+            self.write(")");
+        } else if is_listagg {
+            // LISTAGG(expr, sep) WITHIN GROUP (ORDER BY ...)
+            self.write_keyword("LISTAGG(");
+            if distinct {
+                self.write_keyword("DISTINCT ");
+            }
+            self.gen_group_concat_exprs(exprs);
+            self.write(", ");
+            match separator {
+                Some(s) => self.gen_expr(s),
+                None => self.write("','"),
+            }
+            self.write(")");
+            if !order_by.is_empty() {
+                self.write(" ");
+                self.write_keyword("WITHIN GROUP");
+                self.write(" (");
+                self.gen_group_concat_order_by(order_by);
+                self.write(")");
+            }
+        } else if is_sqlite {
+            // SQLite: GROUP_CONCAT(expr[, sep]). No DISTINCT/ORDER BY support;
+            // they are dropped on output since the target dialect lacks them.
+            self.write_keyword("GROUP_CONCAT(");
+            self.gen_group_concat_exprs(exprs);
+            if let Some(s) = separator {
+                self.write(", ");
+                self.gen_expr(s);
+            }
+            self.write(")");
+        } else {
+            // MySQL family (and default): full GROUP_CONCAT grammar.
+            self.write_keyword("GROUP_CONCAT(");
+            if distinct {
+                self.write_keyword("DISTINCT ");
+            }
+            self.gen_group_concat_exprs(exprs);
+            if !order_by.is_empty() {
+                self.write(" ");
+                self.gen_group_concat_order_by(order_by);
+            }
+            if let Some(s) = separator {
+                self.write(" ");
+                self.write_keyword("SEPARATOR");
+                self.write(" ");
+                self.gen_expr(s);
+            }
+            self.write(")");
+        }
+    }
+
+    fn gen_group_concat_exprs(&mut self, exprs: &[Expr]) {
+        for (i, e) in exprs.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.gen_expr(e);
+        }
+    }
+
+    fn gen_group_concat_order_by(&mut self, order_by: &[OrderByItem]) {
+        self.write_keyword("ORDER BY");
+        self.write(" ");
+        for (i, item) in order_by.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.gen_expr(&item.expr);
+            if !item.ascending {
+                self.write(" ");
+                self.write_keyword("DESC");
+            }
+            if let Some(nulls_first) = item.nulls_first {
+                self.write(" ");
+                self.write_keyword(if nulls_first {
+                    "NULLS FIRST"
+                } else {
+                    "NULLS LAST"
+                });
             }
         }
     }
