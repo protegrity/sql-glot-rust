@@ -905,6 +905,7 @@ fn infer_typed_function_type(func: &TypedFunction, ann: &TypeAnnotations) -> Opt
         }
         TypedFunction::ApproxDistinct { .. } => Some(DataType::BigInt),
         TypedFunction::Variance { .. } | TypedFunction::Stddev { .. } => Some(DataType::Double),
+        TypedFunction::GroupConcat { .. } => Some(DataType::Varchar(None)),
 
         // ── Array ────────────────────────────────────────────────────
         TypedFunction::ArrayConcat { arrays } => {

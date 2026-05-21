@@ -736,6 +736,21 @@ pub enum TypedFunction {
     Variance { expr: Box<Expr> },
     /// `STDDEV(expr)` / `STDDEV_SAMP`
     Stddev { expr: Box<Expr> },
+    /// `GROUP_CONCAT([DISTINCT] expr [, ...] [ORDER BY ...] [SEPARATOR sep])` (MySQL)
+    /// / `STRING_AGG(expr, sep [ORDER BY ...])` (Postgres/BigQuery/TSQL)
+    /// / `LISTAGG(expr, sep [WITHIN GROUP (ORDER BY ...)])` (Oracle/Redshift/Snowflake)
+    /// / `GROUP_CONCAT(expr, sep)` (SQLite)
+    GroupConcat {
+        /// The expression(s) being concatenated. MySQL allows multiple positional
+        /// args which are implicitly concatenated; most other dialects accept one.
+        exprs: Vec<Expr>,
+        /// Optional separator. When absent, dialect default applies (`,` for MySQL).
+        separator: Option<Box<Expr>>,
+        /// Optional ORDER BY clause for the aggregate input.
+        order_by: Vec<OrderByItem>,
+        /// DISTINCT modifier on input rows.
+        distinct: bool,
+    },
 
     // ── Array ──────────────────────────────────────────────────────────
     /// `ARRAY_CONCAT(arr1, arr2)` / `ARRAY_CAT`
@@ -970,6 +985,22 @@ impl TypedFunction {
             | TypedFunction::ApproxDistinct { expr }
             | TypedFunction::Variance { expr }
             | TypedFunction::Stddev { expr } => expr.walk(visitor),
+            TypedFunction::GroupConcat {
+                exprs,
+                separator,
+                order_by,
+                ..
+            } => {
+                for e in exprs {
+                    e.walk(visitor);
+                }
+                if let Some(s) = separator {
+                    s.walk(visitor);
+                }
+                for o in order_by {
+                    o.expr.walk(visitor);
+                }
+            }
 
             // Array
             TypedFunction::ArrayConcat { arrays } => {
@@ -1255,6 +1286,24 @@ impl TypedFunction {
             },
             TypedFunction::Stddev { expr } => TypedFunction::Stddev {
                 expr: Box::new(expr.transform(func)),
+            },
+            TypedFunction::GroupConcat {
+                exprs,
+                separator,
+                order_by,
+                distinct,
+            } => TypedFunction::GroupConcat {
+                exprs: exprs.into_iter().map(|e| e.transform(func)).collect(),
+                separator: separator.map(|s| Box::new(s.transform(func))),
+                order_by: order_by
+                    .into_iter()
+                    .map(|o| OrderByItem {
+                        expr: o.expr.transform(func),
+                        ascending: o.ascending,
+                        nulls_first: o.nulls_first,
+                    })
+                    .collect(),
+                distinct,
             },
 
             // Array

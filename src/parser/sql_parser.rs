@@ -598,7 +598,11 @@ impl Parser {
             None => (None, QuoteStyle::None),
         };
 
-        Ok(SelectItem::Expr { expr, alias, alias_quote_style })
+        Ok(SelectItem::Expr {
+            expr,
+            alias,
+            alias_quote_style,
+        })
     }
 
     fn parse_optional_alias(&mut self) -> Result<Option<(String, QuoteStyle)>> {
@@ -782,7 +786,11 @@ impl Parser {
                 Some((name, qs)) => (Some(name), qs),
                 None => (None, QuoteStyle::None),
             };
-            values.push(PivotValue { value, alias, alias_quote_style });
+            values.push(PivotValue {
+                value,
+                alias,
+                alias_quote_style,
+            });
             if !self.match_token(TokenType::Comma) {
                 break;
             }
@@ -851,6 +859,13 @@ impl Parser {
         let mut joins = Vec::new();
         loop {
             let join_type = match self.peek_type() {
+                // `FROM a, b` is treated as `FROM a CROSS JOIN b`. Note the
+                // SQL standard gives comma a lower precedence than explicit
+                // JOIN operators (so `FROM a, b JOIN c ON ...` should be
+                // `a CROSS JOIN (b JOIN c ...)`), but we flatten everything
+                // into a left-deep chain. Column resolution still works for
+                // the common cases since the join order is associative when
+                // ON-clauses only reference adjacent tables.
                 TokenType::Comma => {
                     self.advance();
                     JoinType::Cross
@@ -2806,9 +2821,16 @@ impl Parser {
                     // Special: COUNT(*), COUNT(DISTINCT x)
                     let distinct = self.match_token(TokenType::Distinct);
 
-                    let args = if name.eq_ignore_ascii_case("GROUP_CONCAT") {
-                        self.parse_group_concat_args()?
-                    } else if self.peek_type() == &TokenType::RParen {
+                    // MySQL's GROUP_CONCAT has bespoke grammar
+                    // (ORDER BY ..., SEPARATOR ...) — parse it into a typed
+                    // expression so the structure is preserved across dialects.
+                    if name.eq_ignore_ascii_case("GROUP_CONCAT") {
+                        let expr = self.parse_group_concat_call(distinct)?;
+                        self.expect(TokenType::RParen)?;
+                        return Ok(expr);
+                    }
+
+                    let args = if self.peek_type() == &TokenType::RParen {
                         vec![]
                     } else if self.peek_type() == &TokenType::Star {
                         self.advance();
@@ -2945,38 +2967,45 @@ impl Parser {
         }
     }
 
-    fn parse_group_concat_args(&mut self) -> Result<Vec<Expr>> {
-        if self.peek_type() == &TokenType::RParen {
-            return Ok(vec![]);
-        }
+    /// Parse the inside of `GROUP_CONCAT(...)` (caller has already consumed
+    /// the `(` and optional `DISTINCT`). Returns a typed `GroupConcat`
+    /// expression. Does NOT consume the trailing `)`.
+    fn parse_group_concat_call(&mut self, distinct: bool) -> Result<Expr> {
+        let mut exprs: Vec<Expr> = Vec::new();
+        let mut order_by: Vec<OrderByItem> = Vec::new();
+        let mut separator: Option<Box<Expr>> = None;
 
-        let mut args = vec![self.parse_expr()?];
-
-        if self.match_token(TokenType::Order) {
-            self.expect(TokenType::By)?;
-            loop {
-                let _ = self.parse_expr()?;
-                if !self.match_token(TokenType::Asc) {
-                    let _ = self.match_token(TokenType::Desc);
-                }
-                if self.check_keyword("SEPARATOR") || self.peek_type() == &TokenType::RParen {
-                    break;
-                }
-                if !self.match_token(TokenType::Comma) {
-                    break;
-                }
+        if self.peek_type() != &TokenType::RParen {
+            exprs.push(self.parse_expr()?);
+            while self.peek_type() == &TokenType::Comma {
+                // ORDER BY / SEPARATOR are alternative terminators, not args.
+                // Peek one past the comma to disambiguate `f(a, b)` from
+                // `f(a, b ORDER BY ...)` — but comma here always introduces
+                // another positional arg, so just keep consuming.
+                self.advance();
+                exprs.push(self.parse_expr()?);
             }
-        } else {
-            while self.match_token(TokenType::Comma) {
-                args.push(self.parse_expr()?);
+
+            if self.match_token(TokenType::Order) {
+                self.expect(TokenType::By)?;
+                order_by = self.parse_order_by_items()?;
+            }
+
+            if self.match_keyword("SEPARATOR") {
+                separator = Some(Box::new(self.parse_expr()?));
             }
         }
 
-        if self.match_keyword("SEPARATOR") {
-            args.push(self.parse_expr()?);
-        }
-
-        Ok(args)
+        Ok(Expr::TypedFunction {
+            func: TypedFunction::GroupConcat {
+                exprs,
+                separator,
+                order_by,
+                distinct,
+            },
+            filter: None,
+            over: None,
+        })
     }
 
     /// Try to construct a typed function expression from a parsed function call.

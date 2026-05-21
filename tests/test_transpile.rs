@@ -227,6 +227,19 @@ fn test_identity_multiple_from_tables() {
         transpile("SELECT * FROM a, b", Dialect::Ansi, Dialect::Ansi).unwrap(),
         "SELECT * FROM a CROSS JOIN b"
     );
+    assert_eq!(
+        transpile("SELECT * FROM a, b, c", Dialect::Ansi, Dialect::Ansi).unwrap(),
+        "SELECT * FROM a CROSS JOIN b CROSS JOIN c"
+    );
+    assert_eq!(
+        transpile(
+            "SELECT * FROM a, b WHERE a.x = b.y",
+            Dialect::Ansi,
+            Dialect::Ansi,
+        )
+        .unwrap(),
+        "SELECT * FROM a CROSS JOIN b WHERE a.x = b.y"
+    );
     validate_identity("SELECT * FROM a CROSS JOIN b");
 }
 
@@ -241,6 +254,8 @@ fn test_mysql_group_concat_to_sqlite() {
         .unwrap(),
         "SELECT GROUP_CONCAT(v, '|') FROM gc"
     );
+    // SQLite has no ORDER BY support inside GROUP_CONCAT; the order is
+    // intentionally dropped on output.
     assert_eq!(
         transpile(
             "SELECT GROUP_CONCAT(v ORDER BY v SEPARATOR '|') FROM gc",
@@ -249,6 +264,51 @@ fn test_mysql_group_concat_to_sqlite() {
         )
         .unwrap(),
         "SELECT GROUP_CONCAT(v, '|') FROM gc"
+    );
+}
+
+#[test]
+fn test_mysql_group_concat_identity() {
+    // Round-trip MySQL → MySQL must preserve DISTINCT, ORDER BY, and SEPARATOR.
+    assert_eq!(
+        transpile(
+            "SELECT GROUP_CONCAT(v SEPARATOR '|') FROM gc",
+            Dialect::Mysql,
+            Dialect::Mysql,
+        )
+        .unwrap(),
+        "SELECT GROUP_CONCAT(v SEPARATOR '|') FROM gc"
+    );
+    assert_eq!(
+        transpile(
+            "SELECT GROUP_CONCAT(DISTINCT v ORDER BY v DESC SEPARATOR ',') FROM gc",
+            Dialect::Mysql,
+            Dialect::Mysql,
+        )
+        .unwrap(),
+        "SELECT GROUP_CONCAT(DISTINCT v ORDER BY v DESC SEPARATOR ',') FROM gc"
+    );
+}
+
+#[test]
+fn test_mysql_group_concat_to_postgres() {
+    assert_eq!(
+        transpile(
+            "SELECT GROUP_CONCAT(v SEPARATOR '|') FROM gc",
+            Dialect::Mysql,
+            Dialect::Postgres,
+        )
+        .unwrap(),
+        "SELECT STRING_AGG(v, '|') FROM gc"
+    );
+    assert_eq!(
+        transpile(
+            "SELECT GROUP_CONCAT(v ORDER BY v DESC SEPARATOR '|') FROM gc",
+            Dialect::Mysql,
+            Dialect::Postgres,
+        )
+        .unwrap(),
+        "SELECT STRING_AGG(v, '|' ORDER BY v DESC) FROM gc"
     );
 }
 

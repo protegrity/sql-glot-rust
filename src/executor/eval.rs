@@ -520,6 +520,7 @@ fn is_typed_aggregate(func: &TypedFunction) -> bool {
             | TypedFunction::ArrayAgg { .. }
             | TypedFunction::Variance { .. }
             | TypedFunction::Stddev { .. }
+            | TypedFunction::GroupConcat { .. }
     )
 }
 
