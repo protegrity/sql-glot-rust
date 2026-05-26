@@ -1912,3 +1912,119 @@ fn test_non_oracle_keeps_table_alias_as() {
         Dialect::Postgres,
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-003: ANSI typed string literals (DATE 'x', TIMESTAMP 'x', TIME 'x')
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_date_literal_roundtrip_oracle() {
+    validate_with_dialect(
+        "SELECT DATE '2024-01-01' FROM DUAL",
+        "SELECT DATE '2024-01-01' FROM DUAL",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_timestamp_literal_roundtrip_postgres() {
+    validate_with_dialect(
+        "SELECT TIMESTAMP '2024-06-15 10:30:00'",
+        "SELECT TIMESTAMP '2024-06-15 10:30:00'",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn test_date_literal_in_where_clause() {
+    validate_with_dialect(
+        "SELECT * FROM orders WHERE order_date > DATE '2024-01-01'",
+        "SELECT * FROM orders WHERE order_date > DATE '2024-01-01'",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_timestamp_literal_in_between() {
+    validate_with_dialect(
+        "SELECT * FROM events WHERE ts BETWEEN TIMESTAMP '2024-01-01 00:00:00' AND TIMESTAMP '2024-12-31 23:59:59'",
+        "SELECT * FROM events WHERE ts BETWEEN TIMESTAMP '2024-01-01 00:00:00' AND TIMESTAMP '2024-12-31 23:59:59'",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_date_literal_cross_dialect_postgres_to_oracle() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE created_at >= DATE '2024-06-01'",
+        "SELECT * FROM t WHERE created_at >= DATE '2024-06-01'",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_date_literal_oracle_to_mysql() {
+    validate_with_dialect(
+        "SELECT DATE '2024-01-01' FROM DUAL",
+        "SELECT CAST('2024-01-01' AS DATE) FROM DUAL",
+        Dialect::Oracle,
+        Dialect::Mysql,
+    );
+}
+
+#[test]
+fn test_date_literal_in_insert() {
+    validate_with_dialect(
+        "INSERT INTO t (id, created) VALUES (1, DATE '2024-01-01')",
+        "INSERT INTO t (id, created) VALUES (1, DATE '2024-01-01')",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_multiple_date_literals() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE d BETWEEN DATE '2024-01-01' AND DATE '2024-12-31'",
+        "SELECT * FROM t WHERE d BETWEEN DATE '2024-01-01' AND DATE '2024-12-31'",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_time_literal() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE start_time > TIME '10:30:00'",
+        "SELECT * FROM t WHERE start_time > TIME '10:30:00'",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn test_date_as_column_name() {
+    // DATE without a following string literal must still parse as a column
+    validate_with_dialect(
+        "SELECT date FROM t",
+        "SELECT date FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn test_date_as_function_call() {
+    // DATE(...) must still parse as a function call
+    validate_with_dialect(
+        "SELECT DATE(timestamp_col) FROM t",
+        "SELECT DATE(timestamp_col) FROM t",
+        Dialect::BigQuery,
+        Dialect::BigQuery,
+    );
+}

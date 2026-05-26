@@ -1501,7 +1501,7 @@ fn test_duckdb_identity() {
     let sqls = [
         "SELECT 1",
         "SELECT * FROM t WHERE a ILIKE '%x%'",
-        "SELECT CAST('2024-01-01' AS DATE)",
+        "SELECT DATE '2024-01-01'",
         "SELECT a, b FROM t ORDER BY a LIMIT 5",
     ];
     for sql in &sqls {
