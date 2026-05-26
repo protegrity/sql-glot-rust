@@ -2814,6 +2814,35 @@ impl Parser {
                 let name = name_token.value.clone();
                 let name_qs = quote_style_from_char(name_token.quote_char);
 
+                // ── ANSI typed string literals: DATE 'x', TIMESTAMP 'x', TIME 'x' ──
+                if matches!(
+                    name_token.token_type,
+                    TokenType::Date
+                        | TokenType::Timestamp
+                        | TokenType::TimestampTz
+                        | TokenType::Time
+                ) && self.peek_type() == &TokenType::String
+                {
+                    let value_token = self.advance().clone();
+                    let data_type = match name_token.token_type {
+                        TokenType::Date => DataType::Date,
+                        TokenType::Timestamp => DataType::Timestamp {
+                            precision: None,
+                            with_tz: false,
+                        },
+                        TokenType::TimestampTz => DataType::Timestamp {
+                            precision: None,
+                            with_tz: true,
+                        },
+                        TokenType::Time => DataType::Time { precision: None },
+                        _ => unreachable!(),
+                    };
+                    return Ok(Expr::Cast {
+                        expr: Box::new(Expr::StringLiteral(value_token.value)),
+                        data_type,
+                    });
+                }
+
                 // Function call: name(...)
                 if self.peek_type() == &TokenType::LParen {
                     self.advance();

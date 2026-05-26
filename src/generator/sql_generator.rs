@@ -1847,6 +1847,34 @@ impl Generator {
                 self.write(")");
             }
             Expr::Cast { expr, data_type } => {
+                // ANSI typed string literals: emit DATE 'x' / TIMESTAMP 'x' / TIME 'x'
+                if let Expr::StringLiteral(val) = expr.as_ref() {
+                    let ansi_keyword = match data_type {
+                        DataType::Date => Some("DATE"),
+                        DataType::Timestamp { .. } => Some("TIMESTAMP"),
+                        DataType::Time { .. } => Some("TIME"),
+                        _ => None,
+                    };
+                    if let Some(kw) = ansi_keyword {
+                        let is_mysql_family = matches!(
+                            self.dialect,
+                            Some(
+                                Dialect::Mysql
+                                    | Dialect::Doris
+                                    | Dialect::SingleStore
+                                    | Dialect::StarRocks
+                            )
+                        );
+                        if !is_mysql_family {
+                            self.write_keyword(kw);
+                            self.write(" '");
+                            self.write(val);
+                            self.write("'");
+                            return;
+                        }
+                    }
+                }
+
                 let is_postgres = matches!(
                     self.dialect,
                     Some(
