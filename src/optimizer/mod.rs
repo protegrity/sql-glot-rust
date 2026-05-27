@@ -98,8 +98,18 @@ fn fold_expr(expr: Expr) -> Expr {
 
             // String concatenation folding
             if matches!(op, BinaryOperator::Concat) {
-                if let (Expr::StringLiteral(l), Expr::StringLiteral(r)) = (&left, &right) {
-                    return Expr::StringLiteral(format!("{l}{r}"));
+                match (&left, &right) {
+                    (Expr::NationalStringLiteral(l), Expr::NationalStringLiteral(r)) => {
+                        return Expr::NationalStringLiteral(format!("{l}{r}"));
+                    }
+                    (Expr::NationalStringLiteral(l), Expr::StringLiteral(r))
+                    | (Expr::StringLiteral(l), Expr::NationalStringLiteral(r)) => {
+                        return Expr::NationalStringLiteral(format!("{l}{r}"));
+                    }
+                    (Expr::StringLiteral(l), Expr::StringLiteral(r)) => {
+                        return Expr::StringLiteral(format!("{l}{r}"));
+                    }
+                    _ => {}
                 }
             }
 

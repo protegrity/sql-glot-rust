@@ -1585,6 +1585,15 @@ impl Generator {
                 self.write(&s.replace('\'', "''"));
                 self.write("'");
             }
+            Expr::NationalStringLiteral(s) => {
+                if matches!(self.dialect, Some(Dialect::Oracle) | Some(Dialect::Tsql)) {
+                    self.write("N'");
+                } else {
+                    self.write("'");
+                }
+                self.write(&s.replace('\'', "''"));
+                self.write("'");
+            }
             Expr::Boolean(b) => self.write(if *b { "TRUE" } else { "FALSE" }),
             Expr::Null => self.write("NULL"),
             Expr::Default => self.write_keyword("DEFAULT"),

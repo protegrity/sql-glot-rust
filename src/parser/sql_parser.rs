@@ -2646,6 +2646,10 @@ impl Parser {
                 self.advance();
                 Ok(Expr::StringLiteral(token.value))
             }
+            TokenType::NationalString => {
+                self.advance();
+                Ok(Expr::NationalStringLiteral(token.value))
+            }
             TokenType::True => {
                 self.advance();
                 Ok(Expr::Boolean(true))
@@ -3669,7 +3673,8 @@ impl Parser {
                 "MICROSECOND" => Some(DateTimeField::Microsecond),
                 _ => None,
             },
-            Expr::StringLiteral(s) => match s.to_uppercase().as_str() {
+            Expr::StringLiteral(s) | Expr::NationalStringLiteral(s) => {
+                match s.to_uppercase().as_str() {
                 "YEAR" => Some(DateTimeField::Year),
                 "QUARTER" => Some(DateTimeField::Quarter),
                 "MONTH" => Some(DateTimeField::Month),
@@ -3681,7 +3686,8 @@ impl Parser {
                 "MILLISECOND" => Some(DateTimeField::Millisecond),
                 "MICROSECOND" => Some(DateTimeField::Microsecond),
                 _ => None,
-            },
+                }
+            }
             _ => None,
         }
     }

@@ -341,6 +341,8 @@ pub enum Expr {
     Number(String),
     /// A string literal.
     StringLiteral(String),
+    /// A national character string literal: `N'...'`.
+    NationalStringLiteral(String),
     /// A boolean literal.
     Boolean(bool),
     /// NULL literal.
@@ -1979,6 +1981,7 @@ impl Expr {
             Expr::Column { .. }
             | Expr::Number(_)
             | Expr::StringLiteral(_)
+            | Expr::NationalStringLiteral(_)
             | Expr::Boolean(_)
             | Expr::Null
             | Expr::Wildcard
@@ -2248,7 +2251,11 @@ impl Expr {
     pub fn is_literal(&self) -> bool {
         matches!(
             self,
-            Expr::Number(_) | Expr::StringLiteral(_) | Expr::Boolean(_) | Expr::Null
+            Expr::Number(_)
+                | Expr::StringLiteral(_)
+                | Expr::NationalStringLiteral(_)
+                | Expr::Boolean(_)
+                | Expr::Null
         )
     }
 

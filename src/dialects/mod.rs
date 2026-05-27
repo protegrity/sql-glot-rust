@@ -532,14 +532,17 @@ fn transform_format_expr(expr: Expr, target: Dialect) -> Expr {
     // Since we don't have access to the source dialect here, we use heuristics
     // to detect the format style based on the format string content.
     match &expr {
-        Expr::StringLiteral(s) => {
+        Expr::StringLiteral(s) | Expr::NationalStringLiteral(s) => {
             let detected_source = detect_format_style(s);
             let target_style = time::TimeFormatStyle::for_dialect(target);
 
             // Only convert if styles differ
             if detected_source != target_style {
                 let converted = time::format_time(s, detected_source, target_style);
-                Expr::StringLiteral(converted)
+                match expr {
+                    Expr::NationalStringLiteral(_) => Expr::NationalStringLiteral(converted),
+                    _ => Expr::StringLiteral(converted),
+                }
             } else {
                 expr
             }
