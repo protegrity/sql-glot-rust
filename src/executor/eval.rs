@@ -96,7 +96,7 @@ fn eval_expr_impl(
             }
         }
 
-        Expr::StringLiteral(s) => Ok(Value::String(s.clone())),
+        Expr::StringLiteral(s) | Expr::NationalStringLiteral(s) => Ok(Value::String(s.clone())),
         Expr::Boolean(b) => Ok(Value::Boolean(*b)),
         Expr::Null => Ok(Value::Null),
         Expr::Star | Expr::Wildcard => Ok(Value::Null),

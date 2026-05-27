@@ -484,6 +484,21 @@ impl Tokenizer {
             value.push(self.advance().unwrap());
         }
 
+        // Phase 1 support: treat N'...' / n'...' as a string literal token.
+        // This unblocks Oracle/TSQL national string parsing without AST changes.
+        if value.len() == 1
+            && value
+                .as_bytes()
+                .first()
+                .is_some_and(|b| b.eq_ignore_ascii_case(&b'n'))
+            && self.peek() == Some('\'')
+        {
+            self.advance(); // consume opening quote
+            let mut token = self.read_string(start, start_line, start_col)?;
+            token.token_type = TokenType::NationalString;
+            return Ok(token);
+        }
+
         let token_type = Self::keyword_type(&value);
         Ok(self.make_token(token_type, value, start, start_line, start_col))
     }
@@ -806,5 +821,53 @@ mod tests {
         assert_eq!(tokens[0].token_type, TokenType::Union);
         assert_eq!(tokens[1].token_type, TokenType::Intersect);
         assert_eq!(tokens[2].token_type, TokenType::Except);
+    }
+
+    #[test]
+    fn test_tokenize_n_prefixed_string_literal_uppercase() {
+        let mut tok = Tokenizer::new("N'Hello'");
+        let tokens = tok.tokenize().unwrap();
+        assert_eq!(tokens[0].token_type, TokenType::NationalString);
+        assert_eq!(tokens[0].value, "Hello");
+    }
+
+    #[test]
+    fn test_tokenize_n_prefixed_string_literal_lowercase() {
+        let mut tok = Tokenizer::new("n'hello'");
+        let tokens = tok.tokenize().unwrap();
+        assert_eq!(tokens[0].token_type, TokenType::NationalString);
+        assert_eq!(tokens[0].value, "hello");
+    }
+
+    #[test]
+    fn test_tokenize_n_prefixed_string_literal_escaped_quote() {
+        let mut tok = Tokenizer::new("N'can''t stop'");
+        let tokens = tok.tokenize().unwrap();
+        assert_eq!(tokens[0].token_type, TokenType::NationalString);
+        assert_eq!(tokens[0].value, "can't stop");
+    }
+
+    #[test]
+    fn test_tokenize_n_prefixed_string_literal_unicode() {
+        let mut tok = Tokenizer::new("N'テスト'");
+        let tokens = tok.tokenize().unwrap();
+        assert_eq!(tokens[0].token_type, TokenType::NationalString);
+        assert_eq!(tokens[0].value, "テスト");
+    }
+
+    #[test]
+    fn test_tokenize_identifier_n_without_quote() {
+        let mut tok = Tokenizer::new("SELECT N FROM t");
+        let tokens = tok.tokenize().unwrap();
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[1].value, "N");
+    }
+
+    #[test]
+    fn test_tokenize_identifier_name_starting_with_n() {
+        let mut tok = Tokenizer::new("SELECT NAME FROM t");
+        let tokens = tok.tokenize().unwrap();
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[1].value, "NAME");
     }
 }

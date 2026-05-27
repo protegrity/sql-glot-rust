@@ -59,6 +59,36 @@ fn test_identity_literals() {
 }
 
 #[test]
+fn test_national_string_literal_oracle_roundtrip() {
+    validate_with_dialect(
+        "SELECT N'Hello' FROM DUAL",
+        "SELECT N'Hello' FROM DUAL",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_national_string_literal_tsql_roundtrip() {
+    validate_with_dialect(
+        "SELECT N'Hello'",
+        "SELECT N'Hello'",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_national_string_literal_oracle_to_postgres() {
+    validate_with_dialect(
+        "SELECT N'Hello' FROM DUAL",
+        "SELECT 'Hello' FROM DUAL",
+        Dialect::Oracle,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
 fn test_identity_arithmetic() {
     let cases = [
         "SELECT 1 + 1",

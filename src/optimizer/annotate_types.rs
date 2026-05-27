@@ -453,6 +453,7 @@ fn annotate_children<S: Schema>(
         Expr::Column { .. }
         | Expr::Number(_)
         | Expr::StringLiteral(_)
+        | Expr::NationalStringLiteral(_)
         | Expr::Boolean(_)
         | Expr::Null
         | Expr::Wildcard
@@ -490,7 +491,7 @@ fn infer_type<S: Schema>(
     match expr {
         // ── Literals ───────────────────────────────────────────────────
         Expr::Number(s) => Some(infer_number_type(s)),
-        Expr::StringLiteral(_) => Some(DataType::Varchar(None)),
+        Expr::StringLiteral(_) | Expr::NationalStringLiteral(_) => Some(DataType::Varchar(None)),
         Expr::Boolean(_) => Some(DataType::Boolean),
         Expr::Null => Some(DataType::Null),
 
