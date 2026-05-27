@@ -1,6 +1,6 @@
 [package]
 name = "sqlglot-rust"
-version = "0.9.29"
+version = "0.9.30"
 edition = "2024"
 description = "A SQL parser, optimizer, and transpiler library inspired by Python's sqlglot"
 license = "MIT"
