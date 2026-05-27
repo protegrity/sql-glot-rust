@@ -88,6 +88,89 @@ fn test_national_string_literal_oracle_to_postgres() {
     );
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-007: Auto-promote Unicode StringLiteral to N'...' for TSQL/Oracle
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_string_literal_ascii_tsql_no_prefix() {
+    // ASCII-only strings should NOT get N prefix
+    validate_with_dialect("SELECT 'Hello'", "SELECT 'Hello'", Dialect::Postgres, Dialect::Tsql);
+}
+
+#[test]
+fn test_string_literal_unicode_tsql_gets_n_prefix() {
+    // Non-ASCII strings MUST get N prefix for TSQL
+    validate_with_dialect("SELECT '世界'", "SELECT N'世界'", Dialect::Postgres, Dialect::Tsql);
+}
+
+#[test]
+fn test_string_literal_emoji_tsql_gets_n_prefix() {
+    validate_with_dialect(
+        "SELECT '🎉 party'",
+        "SELECT N'🎉 party'",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_string_literal_accented_tsql_gets_n_prefix() {
+    validate_with_dialect("SELECT 'café'", "SELECT N'café'", Dialect::Postgres, Dialect::Tsql);
+}
+
+#[test]
+fn test_string_literal_unicode_oracle_gets_n_prefix() {
+    validate_with_dialect(
+        "SELECT 'テスト' FROM DUAL",
+        "SELECT N'テスト' FROM DUAL",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_string_literal_unicode_postgres_no_prefix() {
+    // PostgreSQL target should NOT add N prefix
+    validate_with_dialect("SELECT '世界'", "SELECT '世界'", Dialect::Postgres, Dialect::Postgres);
+}
+
+#[test]
+fn test_string_literal_unicode_in_where_tsql() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE name = '日本'",
+        "SELECT * FROM t WHERE name = N'日本'",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_string_literal_unicode_in_insert_tsql() {
+    validate_with_dialect(
+        "INSERT INTO t (col) VALUES ('données')",
+        "INSERT INTO t (col) VALUES (N'données')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_string_literal_escaped_quote_with_unicode_tsql() {
+    validate_with_dialect(
+        "SELECT '日本''s best'",
+        "SELECT N'日本''s best'",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_national_string_literal_still_works_with_cr007() {
+    // Existing NationalStringLiteral behavior unchanged
+    validate_with_dialect("SELECT N'Hello'", "SELECT N'Hello'", Dialect::Tsql, Dialect::Tsql);
+}
+
 #[test]
 fn test_identity_arithmetic() {
     let cases = [

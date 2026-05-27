@@ -1581,7 +1581,15 @@ impl Generator {
             }
             Expr::Number(n) => self.write(n),
             Expr::StringLiteral(s) => {
-                self.write("'");
+                // TSQL and Oracle require N'...' prefix for string literals containing
+                // non-ASCII characters to prevent code-page corruption (CR-007).
+                if matches!(self.dialect, Some(Dialect::Oracle) | Some(Dialect::Tsql))
+                    && !s.is_ascii()
+                {
+                    self.write("N'");
+                } else {
+                    self.write("'");
+                }
                 self.write(&s.replace('\'', "''"));
                 self.write("'");
             }
