@@ -2274,9 +2274,25 @@ fn test_pg_to_tsql_boolean_type() {
 fn test_pg_to_tsql_bytea_type() {
     validate_with_dialect(
         "SELECT CAST(x AS BYTEA) FROM t",
-        "SELECT CAST(x AS VARBINARY) FROM t",
+        "SELECT CAST(x AS VARBINARY(MAX)) FROM t",
         Dialect::Postgres,
         Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_tsql_to_pg_varbinary_type() {
+    validate_with_dialect(
+        "SELECT CAST(x AS VARBINARY(100)) FROM t",
+        "SELECT x::BYTEA FROM t",
+        Dialect::Tsql,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT CAST(x AS VARBINARY(MAX)) FROM t",
+        "SELECT x::BYTEA FROM t",
+        Dialect::Tsql,
+        Dialect::Postgres,
     );
 }
 

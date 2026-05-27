@@ -851,6 +851,7 @@ pub(crate) fn map_data_type(dt: DataType, target: Dialect) -> DataType {
             DataType::Blob
         }
         (DataType::Blob, t) if is_postgres_family(t) => DataType::Bytea,
+        (DataType::Varbinary(_), t) if is_postgres_family(t) => DataType::Bytea,
 
         // ── BOOLEAN → BOOL ──────────────────────────────────────────────
         (DataType::Boolean, Dialect::Mysql) => DataType::Boolean,
