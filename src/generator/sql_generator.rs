@@ -1491,8 +1491,12 @@ impl Generator {
             }
             DataType::Varbinary(len) => {
                 self.write("VARBINARY");
-                if let Some(n) = len {
-                    self.write(&format!("({n})"));
+                match len {
+                    Some(n) => self.write(&format!("({n})")),
+                    None if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) => {
+                        self.write("(MAX)");
+                    }
+                    None => {}
                 }
             }
             DataType::Boolean => self.write("BOOLEAN"),

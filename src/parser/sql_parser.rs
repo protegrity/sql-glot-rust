@@ -1917,6 +1917,12 @@ impl Parser {
 
     fn parse_single_type_param(&mut self) -> Result<Option<u32>> {
         if self.match_token(TokenType::LParen) {
+            // Handle TSQL MAX keyword (e.g. VARBINARY(MAX), VARCHAR(MAX))
+            if self.check_keyword("MAX") {
+                self.advance(); // consume MAX
+                self.expect(TokenType::RParen)?;
+                return Ok(None);
+            }
             let n: Option<u32> = self.expect(TokenType::Number)?.value.parse().ok();
             self.expect(TokenType::RParen)?;
             Ok(n)
