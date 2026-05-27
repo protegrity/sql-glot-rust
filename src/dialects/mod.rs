@@ -361,6 +361,17 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
                 }
             }
         }
+        Statement::Delete(del) => {
+            if let Some(wh) = &mut del.where_clause {
+                *wh = transform_expr(wh.clone(), target);
+            }
+            // Transform RETURNING expressions
+            for item in &mut del.returning {
+                if let SelectItem::Expr { expr, .. } = item {
+                    *expr = transform_expr(expr.clone(), target);
+                }
+            }
+        }
         // DDL: map data types in CREATE TABLE column definitions
         Statement::CreateTable(ct) => {
             for col in &mut ct.columns {

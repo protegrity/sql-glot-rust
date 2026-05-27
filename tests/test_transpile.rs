@@ -2392,6 +2392,31 @@ fn test_pg_to_tsql_delete_returning() {
     );
 }
 
+// ── PSQ-2414: DELETE WHERE clause expression transformation ─────────────────
+
+#[test]
+fn test_pg_to_oracle_delete_where_transform() {
+    // Verify that transform_expr is applied to DELETE WHERE clause.
+    // SUBSTRING → SUBSTR for Oracle.
+    validate_with_dialect(
+        "DELETE FROM t WHERE SUBSTRING(status, 1, 3) = 'act'",
+        "DELETE FROM t WHERE SUBSTR(status, 1, 3) = 'act'",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_delete_simple_equality() {
+    // Simple equality DELETE should pass through correctly.
+    validate_with_dialect(
+        "DELETE FROM customers WHERE customer_id = 'TEST_DEL'",
+        "DELETE FROM customers WHERE customer_id = 'TEST_DEL'",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
 // ── Change 8: POSITION → CHARINDEX ─────────────────────────────────────────
 
 #[test]
