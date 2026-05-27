@@ -5,8 +5,8 @@
 /// through AST transformations.
 use sqlglot_rust::generator::Generator;
 use sqlglot_rust::{
-    parse_with_comments, parse_statements_with_comments,
-    Dialect, Expr, Statement, generate, generate_pretty,
+    Dialect, Expr, Statement, generate, generate_pretty, parse_statements_with_comments,
+    parse_with_comments,
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -101,7 +101,10 @@ fn test_hash_comment_converted_to_line_comment_on_transpile() {
     // When targeting non-MySQL dialects, # should become --
     let sql = "# mysql comment\nSELECT a FROM t";
     let result = roundtrip_dialect(sql, Dialect::Mysql, Dialect::Postgres);
-    assert!(result.contains("-- mysql comment"), "Expected -- comment but got: {result}");
+    assert!(
+        result.contains("-- mysql comment"),
+        "Expected -- comment but got: {result}"
+    );
     assert!(!result.contains('#'));
 }
 
@@ -251,7 +254,10 @@ fn test_commented_expr_walk() {
         }
         true
     });
-    assert!(found, "Walk should traverse through Commented to inner expr");
+    assert!(
+        found,
+        "Walk should traverse through Commented to inner expr"
+    );
 }
 
 #[test]
@@ -285,7 +291,10 @@ fn test_commented_expr_find() {
         comments: vec!["-- note".into()],
     };
     let result = commented.find(&|e| matches!(e, Expr::Column { name, .. } if name == "x"));
-    assert!(result.is_some(), "find should locate column inside Commented");
+    assert!(
+        result.is_some(),
+        "find should locate column inside Commented"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

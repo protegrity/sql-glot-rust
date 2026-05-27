@@ -1,3 +1,4 @@
+use sqlglot_rust::Dialect;
 /// Tests for the Custom Dialect Plugin System (PQO-199).
 ///
 /// Verifies:
@@ -15,7 +16,6 @@ use sqlglot_rust::dialects::plugin::{
     DialectPlugin, DialectRef, DialectRegistry, register_dialect, resolve_dialect, transpile_ext,
     transpile_statements_ext,
 };
-use sqlglot_rust::Dialect;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Test dialect implementations
@@ -292,10 +292,7 @@ fn test_dialect_ref_equality() {
         DialectRef::from(Dialect::Mysql)
     );
     assert_eq!(DialectRef::custom("x"), DialectRef::custom("x"));
-    assert_ne!(
-        DialectRef::custom("x"),
-        DialectRef::from(Dialect::Postgres)
-    );
+    assert_ne!(DialectRef::custom("x"), DialectRef::from(Dialect::Postgres));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

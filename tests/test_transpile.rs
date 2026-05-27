@@ -95,13 +95,23 @@ fn test_national_string_literal_oracle_to_postgres() {
 #[test]
 fn test_string_literal_ascii_tsql_no_prefix() {
     // ASCII-only strings should NOT get N prefix
-    validate_with_dialect("SELECT 'Hello'", "SELECT 'Hello'", Dialect::Postgres, Dialect::Tsql);
+    validate_with_dialect(
+        "SELECT 'Hello'",
+        "SELECT 'Hello'",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
 }
 
 #[test]
 fn test_string_literal_unicode_tsql_gets_n_prefix() {
     // Non-ASCII strings MUST get N prefix for TSQL
-    validate_with_dialect("SELECT '世界'", "SELECT N'世界'", Dialect::Postgres, Dialect::Tsql);
+    validate_with_dialect(
+        "SELECT '世界'",
+        "SELECT N'世界'",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
 }
 
 #[test]
@@ -116,7 +126,12 @@ fn test_string_literal_emoji_tsql_gets_n_prefix() {
 
 #[test]
 fn test_string_literal_accented_tsql_gets_n_prefix() {
-    validate_with_dialect("SELECT 'café'", "SELECT N'café'", Dialect::Postgres, Dialect::Tsql);
+    validate_with_dialect(
+        "SELECT 'café'",
+        "SELECT N'café'",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
 }
 
 #[test]
@@ -132,7 +147,12 @@ fn test_string_literal_unicode_oracle_gets_n_prefix() {
 #[test]
 fn test_string_literal_unicode_postgres_no_prefix() {
     // PostgreSQL target should NOT add N prefix
-    validate_with_dialect("SELECT '世界'", "SELECT '世界'", Dialect::Postgres, Dialect::Postgres);
+    validate_with_dialect(
+        "SELECT '世界'",
+        "SELECT '世界'",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
 }
 
 #[test]
@@ -168,7 +188,12 @@ fn test_string_literal_escaped_quote_with_unicode_tsql() {
 #[test]
 fn test_national_string_literal_still_works_with_cr007() {
     // Existing NationalStringLiteral behavior unchanged
-    validate_with_dialect("SELECT N'Hello'", "SELECT N'Hello'", Dialect::Tsql, Dialect::Tsql);
+    validate_with_dialect(
+        "SELECT N'Hello'",
+        "SELECT N'Hello'",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
 }
 
 #[test]
@@ -2139,5 +2164,256 @@ fn test_date_as_function_call() {
         "SELECT DATE(timestamp_col) FROM t",
         Dialect::BigQuery,
         Dialect::BigQuery,
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-004: PostgreSQL → T-SQL Dialect Translation Gaps
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Change 1: Boolean Literal → 1/0 ─────────────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_boolean_true() {
+    validate_with_dialect("SELECT TRUE", "SELECT 1", Dialect::Postgres, Dialect::Tsql);
+}
+
+#[test]
+fn test_pg_to_tsql_boolean_false() {
+    validate_with_dialect("SELECT FALSE", "SELECT 0", Dialect::Postgres, Dialect::Tsql);
+}
+
+#[test]
+fn test_pg_to_tsql_boolean_in_where() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE active = TRUE",
+        "SELECT * FROM t WHERE active = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 2: EXTRACT → DATEPART ────────────────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_extract_year() {
+    validate_with_dialect(
+        "SELECT EXTRACT(YEAR FROM d) FROM t",
+        "SELECT DATEPART(YEAR, d) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_extract_month() {
+    validate_with_dialect(
+        "SELECT EXTRACT(MONTH FROM created_at) FROM t",
+        "SELECT DATEPART(MONTH, created_at) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_extract_epoch() {
+    validate_with_dialect(
+        "SELECT EXTRACT(EPOCH FROM ts) FROM t",
+        "SELECT DATEDIFF(SECOND, '1970-01-01', ts) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 3: LIMIT/OFFSET → OFFSET/FETCH ──────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_limit_offset() {
+    validate_with_dialect(
+        "SELECT * FROM t ORDER BY a LIMIT 10 OFFSET 5",
+        "SELECT * FROM t ORDER BY a OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_limit_offset_no_order_by() {
+    // Should add ORDER BY (SELECT NULL) when none present
+    validate_with_dialect(
+        "SELECT * FROM t LIMIT 10 OFFSET 5",
+        "SELECT * FROM t ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 4: Data Type Mapping ─────────────────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_text_type() {
+    validate_with_dialect(
+        "SELECT CAST(x AS TEXT) FROM t",
+        "SELECT CAST(x AS VARCHAR) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_boolean_type() {
+    validate_with_dialect(
+        "SELECT CAST(x AS BOOLEAN) FROM t",
+        "SELECT CAST(x AS BIT) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_bytea_type() {
+    validate_with_dialect(
+        "SELECT CAST(x AS BYTEA) FROM t",
+        "SELECT CAST(x AS VARBINARY) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_serial_type() {
+    validate_with_dialect(
+        "CREATE TABLE t (id SERIAL)",
+        "CREATE TABLE t (id INT)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_bigserial_type() {
+    validate_with_dialect(
+        "CREATE TABLE t (id BIGSERIAL)",
+        "CREATE TABLE t (id BIGINT)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_timestamp_type() {
+    validate_with_dialect(
+        "SELECT CAST(x AS TIMESTAMP) FROM t",
+        "SELECT CAST(x AS DATETIME2) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 5: String Concatenation → CONCAT() ──────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_concat_operator() {
+    validate_with_dialect(
+        "SELECT a || b FROM t",
+        "SELECT CONCAT(a, b) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_concat_chain() {
+    validate_with_dialect(
+        "SELECT a || b || c FROM t",
+        "SELECT CONCAT(a, b, c) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 6: INTERVAL Arithmetic → DATEADD ────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_interval_add() {
+    validate_with_dialect(
+        "SELECT ts + INTERVAL '7' DAY FROM t",
+        "SELECT DATEADD(DAY, 7, ts) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_interval_subtract() {
+    validate_with_dialect(
+        "SELECT ts - INTERVAL '1' HOUR FROM t",
+        "SELECT DATEADD(HOUR, -1, ts) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 7: RETURNING → OUTPUT ────────────────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_insert_returning() {
+    validate_with_dialect(
+        "INSERT INTO t (a, b) VALUES (1, 2) RETURNING id",
+        "INSERT INTO t (a, b) OUTPUT INSERTED.id VALUES (1, 2)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_delete_returning() {
+    validate_with_dialect(
+        "DELETE FROM t WHERE id = 1 RETURNING *",
+        "DELETE FROM t OUTPUT DELETED.* WHERE id = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 8: POSITION → CHARINDEX ─────────────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_position() {
+    validate_with_dialect(
+        "SELECT POSITION(substr, name) FROM t",
+        "SELECT CHARINDEX(substr, name) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 9: SIMILAR TO → LIKE ────────────────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_similar_to() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE name SIMILAR TO '%test%'",
+        "SELECT * FROM t WHERE name LIKE '%test%'",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 10: ARRAY → Error ────────────────────────────────────────────────
+
+#[test]
+fn test_pg_to_tsql_array_errors() {
+    let result = transpile(
+        "SELECT ARRAY[1, 2, 3] FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    assert!(result.is_err(), "ARRAY should be unsupported for T-SQL");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("ARRAY"),
+        "Error should mention ARRAY: {}",
+        err
     );
 }

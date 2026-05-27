@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run --example ast_traversal`
 
-use sqlglot_rust::{generate, parse, Dialect, Expr, Statement};
+use sqlglot_rust::{Dialect, Expr, Statement, generate, parse};
 
 fn main() {
     let sql = "SELECT a, b + 1, UPPER(name) FROM users WHERE age > 21 AND status = 'active'";
@@ -44,26 +44,28 @@ fn main() {
                 .columns
                 .into_iter()
                 .map(|item| match item {
-                    sqlglot_rust::ast::SelectItem::Expr { expr, alias, alias_quote_style } => {
-                        sqlglot_rust::ast::SelectItem::Expr {
-                            expr: expr.transform(&|e| match e {
-                                Expr::Column {
-                                    name,
-                                    table,
-                                    quote_style,
-                                    table_quote_style,
-                                } if name == "a" => Expr::Column {
-                                    name: "id".to_string(),
-                                    table,
-                                    quote_style,
-                                    table_quote_style,
-                                },
-                                other => other,
-                            }),
-                            alias,
-                            alias_quote_style,
-                        }
-                    }
+                    sqlglot_rust::ast::SelectItem::Expr {
+                        expr,
+                        alias,
+                        alias_quote_style,
+                    } => sqlglot_rust::ast::SelectItem::Expr {
+                        expr: expr.transform(&|e| match e {
+                            Expr::Column {
+                                name,
+                                table,
+                                quote_style,
+                                table_quote_style,
+                            } if name == "a" => Expr::Column {
+                                name: "id".to_string(),
+                                table,
+                                quote_style,
+                                table_quote_style,
+                            },
+                            other => other,
+                        }),
+                        alias,
+                        alias_quote_style,
+                    },
                     other => other,
                 })
                 .collect(),

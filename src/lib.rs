@@ -123,6 +123,59 @@ pub use parser::parse;
 pub use parser::{parse_statements_with_comments, parse_with_comments};
 pub use planner::{Plan, Projection, Step, StepId, plan};
 
+/// Validate that a transformed AST doesn't contain constructs unsupported by the target dialect.
+fn validate_dialect_support(stmt: &Statement, target: Dialect) -> errors::Result<()> {
+    use crate::ast::Expr;
+    use crate::dialects::Dialect::{Fabric, Tsql};
+
+    if !matches!(target, Tsql | Fabric) {
+        return Ok(());
+    }
+
+    // Walk the AST looking for unsupported constructs
+    let mut found_array = false;
+    fn check_expr(expr: &Expr, found: &mut bool) {
+        match expr {
+            Expr::ArrayLiteral(_) => {
+                *found = true;
+            }
+            _ => {
+                expr.walk(&mut |e| {
+                    if matches!(e, Expr::ArrayLiteral(_)) {
+                        *found = true;
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
+    }
+
+    match stmt {
+        Statement::Select(sel) => {
+            for item in &sel.columns {
+                if let ast::SelectItem::Expr { expr, .. } = item {
+                    check_expr(expr, &mut found_array);
+                }
+            }
+            if let Some(wh) = &sel.where_clause {
+                check_expr(wh, &mut found_array);
+            }
+        }
+        Statement::Expression(expr) => check_expr(expr, &mut found_array),
+        _ => {}
+    }
+
+    if found_array {
+        return Err(errors::SqlglotError::UnsupportedDialectFeature(
+            "ARRAY constructor has no T-SQL equivalent".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 /// Transpile a SQL string from one dialect to another.
 ///
 /// This is the primary high-level API, corresponding to Python sqlglot's
@@ -150,6 +203,7 @@ pub fn transpile(
 ) -> errors::Result<String> {
     let ast = parse(sql, read_dialect)?;
     let transformed = dialects::transform(&ast, read_dialect, write_dialect);
+    validate_dialect_support(&transformed, write_dialect)?;
     Ok(generate(&transformed, write_dialect))
 }
 

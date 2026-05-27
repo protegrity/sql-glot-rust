@@ -462,7 +462,8 @@ fn annotate_children<S: Schema>(
         | Expr::TypeExpr(_)
         | Expr::QualifiedWildcard { .. }
         | Expr::Default
-        | Expr::Commented { .. } => {}
+        | Expr::Commented { .. }
+        | Expr::SimilarTo { .. } => {}
     }
 }
 
@@ -640,6 +641,7 @@ fn infer_type<S: Schema>(
         | Expr::Cube { .. }
         | Expr::Rollup { .. }
         | Expr::GroupingSets { .. }
+        | Expr::SimilarTo { .. }
         | Expr::Commented { .. } => None,
     }
 }

@@ -48,10 +48,7 @@ fn to_c_string(s: String) -> *mut c_char {
 /// Returns a heap-allocated JSON string on success, or `NULL` on failure.
 /// The caller **must** free a non-null return value with [`sqlglot_free`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sqlglot_parse(
-    sql: *const c_char,
-    dialect: *const c_char,
-) -> *mut c_char {
+pub unsafe extern "C" fn sqlglot_parse(sql: *const c_char, dialect: *const c_char) -> *mut c_char {
     let sql_str = match unsafe { cstr_to_option(sql) } {
         Some(s) => s,
         None => return ptr::null_mut(),

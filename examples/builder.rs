@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example builder`
 
 use sqlglot_rust::builder::*;
-use sqlglot_rust::{generate, Dialect};
+use sqlglot_rust::{Dialect, generate};
 
 fn main() {
     // Simple SELECT
