@@ -1852,7 +1852,7 @@ fn test_validate_all_compound_query() {
             ),
             (
                 Dialect::Tsql,
-                "SELECT ISNULL(SUBSTRING(CAST(x AS TEXT), 1, 3), 'none') FROM t",
+                "SELECT ISNULL(SUBSTRING(CAST(x AS VARCHAR), 1, 3), 'none') FROM t",
             ),
             (
                 Dialect::Oracle,
@@ -1916,11 +1916,16 @@ fn test_complex_select_identity_all_dialects() {
         "SELECT a FROM t WHERE a BETWEEN 1 AND 10",
         "SELECT a FROM t WHERE a IN (1, 2, 3)",
         "SELECT a FROM t WHERE a IS NULL",
-        "SELECT EXTRACT(YEAR FROM d) FROM t",
     ];
     for dialect in Dialect::all() {
         for sql in &sqls {
             assert_identity(sql, *dialect);
+        }
+    }
+    // EXTRACT identity - T-SQL/Fabric use DATEPART instead, so skip those
+    for dialect in Dialect::all() {
+        if !matches!(dialect, Dialect::Tsql | Dialect::Fabric) {
+            assert_identity("SELECT EXTRACT(YEAR FROM d) FROM t", *dialect);
         }
     }
     // CAST identity - PostgreSQL-family uses :: syntax, others use CAST()
@@ -2104,7 +2109,10 @@ fn test_postgres_array_type_varchar() {
 
 #[test]
 fn test_postgres_array_type_column_def() {
-    assert_identity("CREATE TABLE t (tags TEXT[], scores INT[][])", Dialect::Postgres);
+    assert_identity(
+        "CREATE TABLE t (tags TEXT[], scores INT[][])",
+        Dialect::Postgres,
+    );
 }
 
 #[test]

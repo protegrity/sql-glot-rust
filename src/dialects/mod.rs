@@ -340,6 +340,12 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
                     }
                 }
             }
+            // Transform RETURNING expressions
+            for item in &mut ins.returning {
+                if let SelectItem::Expr { expr, .. } = item {
+                    *expr = transform_expr(expr.clone(), target);
+                }
+            }
         }
         Statement::Update(upd) => {
             for (_, val) in &mut upd.assignments {
@@ -347,6 +353,12 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
             }
             if let Some(wh) = &mut upd.where_clause {
                 *wh = transform_expr(wh.clone(), target);
+            }
+            // Transform RETURNING expressions
+            for item in &mut upd.returning {
+                if let SelectItem::Expr { expr, .. } = item {
+                    *expr = transform_expr(expr.clone(), target);
+                }
             }
         }
         // DDL: map data types in CREATE TABLE column definitions
@@ -447,17 +459,74 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
             negated,
             escape,
         },
+        // SIMILAR TO → LIKE for T-SQL (lossy: regex features dropped)
+        Expr::SimilarTo {
+            expr,
+            pattern,
+            negated,
+            escape,
+        } if is_tsql_family(target) => {
+            let transformed_pattern = transform_expr(*pattern, target);
+            let simplified = simplify_similar_to_pattern(&transformed_pattern);
+            Expr::Like {
+                expr: Box::new(transform_expr(*expr, target)),
+                pattern: Box::new(simplified),
+                negated,
+                escape,
+            }
+        }
         // Map data types in CAST
         Expr::Cast { expr, data_type } => Expr::Cast {
             expr: Box::new(transform_expr(*expr, target)),
             data_type: map_data_type(data_type, target),
         },
-        // Recurse into binary ops
-        Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
-            left: Box::new(transform_expr(*left, target)),
-            op,
-            right: Box::new(transform_expr(*right, target)),
-        },
+        // Recurse into binary ops, with T-SQL specific transforms
+        Expr::BinaryOp { left, op, right } => {
+            // Change 3: || → CONCAT() for T-SQL
+            // Collect args BEFORE recursive transform to flatten the full chain
+            if op == BinaryOperator::Concat && is_tsql_family(target) {
+                let mut args = Vec::new();
+                collect_concat_args(
+                    &Expr::BinaryOp {
+                        left,
+                        op: BinaryOperator::Concat,
+                        right,
+                    },
+                    &mut args,
+                );
+                // Now transform each collected arg
+                let args = args
+                    .into_iter()
+                    .map(|a| transform_expr(a, target))
+                    .collect();
+                return Expr::Function {
+                    name: "CONCAT".to_string(),
+                    args,
+                    distinct: false,
+                    filter: None,
+                    over: None,
+                };
+            }
+
+            let left_transformed = transform_expr(*left, target);
+            let right_transformed = transform_expr(*right, target);
+
+            // Change 6: expr ± INTERVAL → DATEADD() for T-SQL
+            if is_tsql_family(target) && matches!(op, BinaryOperator::Plus | BinaryOperator::Minus)
+            {
+                if let Some(dateadd) =
+                    try_transform_interval_arithmetic(&left_transformed, &op, &right_transformed)
+                {
+                    return dateadd;
+                }
+            }
+
+            Expr::BinaryOp {
+                left: Box::new(left_transformed),
+                op,
+                right: Box::new(right_transformed),
+            }
+        }
         Expr::UnaryOp { op, expr } => Expr::UnaryOp {
             op,
             expr: Box::new(transform_expr(*expr, target)),
@@ -720,6 +789,10 @@ pub(crate) fn map_function_name(name: &str, target: Dialect) -> String {
             }
         }
 
+        // ── POSITION / CHARINDEX ─────────────────────────────────────────
+        "POSITION" if is_tsql_family(target) => "CHARINDEX".to_string(),
+        "CHARINDEX" if is_postgres_family(target) => "POSITION".to_string(),
+
         // Everything else – preserve original name
         _ => name.to_string(),
     }
@@ -732,6 +805,25 @@ pub(crate) fn map_function_name(name: &str, target: Dialect) -> String {
 /// Map data types between dialects.
 pub(crate) fn map_data_type(dt: DataType, target: Dialect) -> DataType {
     match (dt, target) {
+        // ── T-SQL type mappings ─────────────────────────────────────────
+        (DataType::Text, t) if is_tsql_family(t) => {
+            DataType::Varchar(None) // NVARCHAR(MAX) emitted by generator via Unknown
+        }
+        (DataType::Boolean, t) if is_tsql_family(t) => DataType::Bit(None),
+        (DataType::Bytea, t) if is_tsql_family(t) => DataType::Varbinary(None),
+        (DataType::Json, t) if is_tsql_family(t) => DataType::Varchar(None),
+        (DataType::Jsonb, t) if is_tsql_family(t) => DataType::Varchar(None),
+        (DataType::Uuid, t) if is_tsql_family(t) => {
+            DataType::Unknown("UNIQUEIDENTIFIER".to_string())
+        }
+        (DataType::Serial, t) if is_tsql_family(t) => DataType::Int,
+        (DataType::BigSerial, t) if is_tsql_family(t) => DataType::BigInt,
+        (DataType::SmallSerial, t) if is_tsql_family(t) => DataType::SmallInt,
+        (DataType::Timestamp { .. }, t) if is_tsql_family(t) => {
+            DataType::Unknown("DATETIME2".to_string())
+        }
+        (DataType::Real, t) if is_tsql_family(t) => DataType::Real,
+
         // ── TEXT / STRING ────────────────────────────────────────────────
         // TEXT → STRING for BigQuery, Hive, Spark, Databricks
         (DataType::Text, t) if matches!(t, Dialect::BigQuery) || is_hive_family(t) => {
@@ -786,6 +878,35 @@ fn transform_limit(sel: &mut SelectStatement, target: Dialect) {
             } else {
                 // T-SQL with OFFSET uses OFFSET n ROWS FETCH NEXT m ROWS ONLY
                 sel.fetch_first = Some(limit);
+                // T-SQL OFFSET/FETCH requires ORDER BY. Add ORDER BY (SELECT NULL) if absent.
+                if sel.order_by.is_empty() {
+                    sel.order_by = vec![OrderByItem {
+                        expr: Expr::Subquery(Box::new(Statement::Select(SelectStatement {
+                            comments: Vec::new(),
+                            ctes: Vec::new(),
+                            distinct: false,
+                            top: None,
+                            columns: vec![SelectItem::Expr {
+                                expr: Expr::Null,
+                                alias: None,
+                                alias_quote_style: QuoteStyle::None,
+                            }],
+                            from: None,
+                            joins: Vec::new(),
+                            where_clause: None,
+                            group_by: Vec::new(),
+                            having: None,
+                            order_by: Vec::new(),
+                            limit: None,
+                            offset: None,
+                            fetch_first: None,
+                            qualify: None,
+                            window_definitions: Vec::new(),
+                        }))),
+                        ascending: true,
+                        nulls_first: None,
+                    }];
+                }
             }
         }
         // Also move fetch_first → top when no offset
@@ -938,5 +1059,172 @@ fn transform_quotes_in_table_source(source: &mut TableSource, target: Dialect) {
             transform_quotes_in_table_source(source, target);
         }
         TableSource::Unnest { .. } => {}
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Concat operator transform (Change 3: || → CONCAT() for T-SQL)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Collect all operands from a chain of `||` (Concat) operations into a flat list.
+fn collect_concat_args(expr: &Expr, args: &mut Vec<Expr>) {
+    match expr {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Concat,
+            right,
+        } => {
+            collect_concat_args(left, args);
+            collect_concat_args(right, args);
+        }
+        other => args.push(other.clone()),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Interval arithmetic transform (Change 6: expr ± INTERVAL → DATEADD())
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Try to transform `expr ± INTERVAL 'n unit'` into `DATEADD(unit, ±n, expr)` for T-SQL.
+/// Returns `Some(transformed_expr)` if the right side is an interval, `None` otherwise.
+fn try_transform_interval_arithmetic(
+    left: &Expr,
+    op: &BinaryOperator,
+    right: &Expr,
+) -> Option<Expr> {
+    // Check right side is an interval
+    if let Expr::Interval { value, unit } = right {
+        if let Some((count, unit_name)) = parse_interval_value(value, unit) {
+            let final_count = if matches!(op, BinaryOperator::Minus) {
+                -count
+            } else {
+                count
+            };
+            return Some(Expr::Function {
+                name: "DATEADD".to_string(),
+                args: vec![
+                    // Use a Column expr for the datepart keyword (unquoted identifier)
+                    Expr::Column {
+                        table: None,
+                        name: unit_name,
+                        quote_style: QuoteStyle::None,
+                        table_quote_style: QuoteStyle::None,
+                    },
+                    Expr::Number(final_count.to_string()),
+                    left.clone(),
+                ],
+                distinct: false,
+                filter: None,
+                over: None,
+            });
+        }
+    }
+
+    // Check left side is an interval (less common: INTERVAL '7 days' + col)
+    if let Expr::Interval { value, unit } = left {
+        if matches!(op, BinaryOperator::Plus) {
+            if let Some((count, unit_name)) = parse_interval_value(value, unit) {
+                return Some(Expr::Function {
+                    name: "DATEADD".to_string(),
+                    args: vec![
+                        Expr::Column {
+                            table: None,
+                            name: unit_name,
+                            quote_style: QuoteStyle::None,
+                            table_quote_style: QuoteStyle::None,
+                        },
+                        Expr::Number(count.to_string()),
+                        right.clone(),
+                    ],
+                    distinct: false,
+                    filter: None,
+                    over: None,
+                });
+            }
+        }
+    }
+
+    None
+}
+
+/// Parse an interval value expression and optional unit into (count, T-SQL datepart name).
+fn parse_interval_value(value: &Expr, unit: &Option<DateTimeField>) -> Option<(i64, String)> {
+    // Case 1: INTERVAL '7 days' (value is a string literal containing "7 days")
+    if let Expr::StringLiteral(s) = value {
+        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        if parts.len() == 2 {
+            let count: i64 = parts[0].parse().ok()?;
+            let unit_name = normalize_interval_unit(parts[1])?;
+            return Some((count, unit_name));
+        }
+        if parts.len() == 1 {
+            // Just a number in the string, unit must come from the `unit` field
+            let count: i64 = parts[0].parse().ok()?;
+            if let Some(u) = unit {
+                let unit_name = datetime_field_to_tsql(u)?;
+                return Some((count, unit_name));
+            }
+        }
+    }
+
+    // Case 2: INTERVAL 7 DAY (value is a number, unit is DateTimeField)
+    if let Expr::Number(n) = value {
+        let count: i64 = n.parse().ok()?;
+        if let Some(u) = unit {
+            let unit_name = datetime_field_to_tsql(u)?;
+            return Some((count, unit_name));
+        }
+    }
+
+    None
+}
+
+/// Normalize an interval unit string to a T-SQL DATEADD part name.
+fn normalize_interval_unit(unit: &str) -> Option<String> {
+    let lower = unit.to_lowercase();
+    let normalized = lower.trim_end_matches('s');
+    match normalized {
+        "year" => Some("YEAR".to_string()),
+        "month" => Some("MONTH".to_string()),
+        "week" => Some("WEEK".to_string()),
+        "day" => Some("DAY".to_string()),
+        "hour" => Some("HOUR".to_string()),
+        "minute" => Some("MINUTE".to_string()),
+        "second" => Some("SECOND".to_string()),
+        "millisecond" => Some("MILLISECOND".to_string()),
+        "microsecond" => Some("MICROSECOND".to_string()),
+        _ => None,
+    }
+}
+
+/// Convert a DateTimeField to T-SQL DATEADD unit name.
+fn datetime_field_to_tsql(field: &DateTimeField) -> Option<String> {
+    match field {
+        DateTimeField::Year => Some("YEAR".to_string()),
+        DateTimeField::Quarter => Some("QUARTER".to_string()),
+        DateTimeField::Month => Some("MONTH".to_string()),
+        DateTimeField::Week => Some("WEEK".to_string()),
+        DateTimeField::Day => Some("DAY".to_string()),
+        DateTimeField::Hour => Some("HOUR".to_string()),
+        DateTimeField::Minute => Some("MINUTE".to_string()),
+        DateTimeField::Second => Some("SECOND".to_string()),
+        DateTimeField::Millisecond => Some("MILLISECOND".to_string()),
+        DateTimeField::Microsecond => Some("MICROSECOND".to_string()),
+        _ => None,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SIMILAR TO → LIKE pattern simplification (Change 9)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Simplify a SIMILAR TO pattern for use with LIKE.
+/// Strips regex features (|, (), +, *) that T-SQL LIKE doesn't support.
+fn simplify_similar_to_pattern(pattern: &Expr) -> Expr {
+    if let Expr::StringLiteral(s) = pattern {
+        let simplified = s.replace('|', "%").replace('(', "").replace(')', "");
+        Expr::StringLiteral(simplified)
+    } else {
+        pattern.clone()
     }
 }

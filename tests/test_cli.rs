@@ -16,7 +16,7 @@ fn transpile_stdin_to_stdout() {
         .write_stdin("SELECT CAST(x AS INT) FROM t")
         .assert()
         .success()
-    .stdout(predicate::str::contains("SELECT x::INT FROM t"));
+        .stdout(predicate::str::contains("SELECT x::INT FROM t"));
 }
 
 #[test]

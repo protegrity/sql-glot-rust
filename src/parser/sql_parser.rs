@@ -120,6 +120,16 @@ impl Parser {
         self.peek().value.to_uppercase() == keyword
     }
 
+    /// Check if the token at `current + offset` matches a keyword string.
+    fn check_keyword_offset(&self, keyword: &str, offset: usize) -> bool {
+        let idx = self.pos + offset;
+        if idx < self.tokens.len() {
+            self.tokens[idx].value.to_uppercase() == keyword
+        } else {
+            false
+        }
+    }
+
     /// Match a keyword by string value (for multi-word context-sensitive keywords).
     fn match_keyword(&mut self, keyword: &str) -> bool {
         if self.check_keyword(keyword) {
@@ -2320,6 +2330,40 @@ impl Parser {
                 } else {
                     break;
                 }
+            } else if self.check_keyword("SIMILAR") {
+                // SIMILAR TO pattern [ESCAPE escape_char]
+                self.advance(); // consume SIMILAR
+                self.expect_keyword("TO")?;
+                let pattern = self.parse_addition()?;
+                let escape = if self.match_token(TokenType::Escape) {
+                    Some(Box::new(self.parse_primary()?))
+                } else {
+                    None
+                };
+                left = Expr::SimilarTo {
+                    expr: Box::new(left),
+                    pattern: Box::new(pattern),
+                    negated: false,
+                    escape,
+                };
+            } else if self.peek_type() == &TokenType::Not && self.check_keyword_offset("SIMILAR", 1)
+            {
+                // NOT SIMILAR TO pattern [ESCAPE escape_char]
+                self.advance(); // consume NOT
+                self.advance(); // consume SIMILAR
+                self.expect_keyword("TO")?;
+                let pattern = self.parse_addition()?;
+                let escape = if self.match_token(TokenType::Escape) {
+                    Some(Box::new(self.parse_primary()?))
+                } else {
+                    None
+                };
+                left = Expr::SimilarTo {
+                    expr: Box::new(left),
+                    pattern: Box::new(pattern),
+                    negated: true,
+                    escape,
+                };
             } else {
                 break;
             }
@@ -3675,17 +3719,17 @@ impl Parser {
             },
             Expr::StringLiteral(s) | Expr::NationalStringLiteral(s) => {
                 match s.to_uppercase().as_str() {
-                "YEAR" => Some(DateTimeField::Year),
-                "QUARTER" => Some(DateTimeField::Quarter),
-                "MONTH" => Some(DateTimeField::Month),
-                "WEEK" => Some(DateTimeField::Week),
-                "DAY" => Some(DateTimeField::Day),
-                "HOUR" => Some(DateTimeField::Hour),
-                "MINUTE" => Some(DateTimeField::Minute),
-                "SECOND" => Some(DateTimeField::Second),
-                "MILLISECOND" => Some(DateTimeField::Millisecond),
-                "MICROSECOND" => Some(DateTimeField::Microsecond),
-                _ => None,
+                    "YEAR" => Some(DateTimeField::Year),
+                    "QUARTER" => Some(DateTimeField::Quarter),
+                    "MONTH" => Some(DateTimeField::Month),
+                    "WEEK" => Some(DateTimeField::Week),
+                    "DAY" => Some(DateTimeField::Day),
+                    "HOUR" => Some(DateTimeField::Hour),
+                    "MINUTE" => Some(DateTimeField::Minute),
+                    "SECOND" => Some(DateTimeField::Second),
+                    "MILLISECOND" => Some(DateTimeField::Millisecond),
+                    "MICROSECOND" => Some(DateTimeField::Microsecond),
+                    _ => None,
                 }
             }
             _ => None,

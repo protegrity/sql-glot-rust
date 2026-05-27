@@ -418,6 +418,13 @@ pub enum Expr {
         negated: bool,
         escape: Option<Box<Expr>>,
     },
+    /// `expr [NOT] SIMILAR TO pattern [ESCAPE escape_char]`
+    SimilarTo {
+        expr: Box<Expr>,
+        pattern: Box<Expr>,
+        negated: bool,
+        escape: Option<Box<Expr>>,
+    },
     /// `CASE [operand] WHEN ... THEN ... ELSE ... END`
     Case {
         operand: Option<Box<Expr>>,
@@ -1905,7 +1912,9 @@ impl Expr {
                 expr.walk(visitor);
                 right.walk(visitor);
             }
-            Expr::Like { expr, pattern, .. } | Expr::ILike { expr, pattern, .. } => {
+            Expr::Like { expr, pattern, .. }
+            | Expr::ILike { expr, pattern, .. }
+            | Expr::SimilarTo { expr, pattern, .. } => {
                 expr.walk(visitor);
                 pattern.walk(visitor);
             }

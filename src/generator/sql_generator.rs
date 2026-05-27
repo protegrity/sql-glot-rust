@@ -377,16 +377,30 @@ impl Generator {
 
         if let Some(offset) = &sel.offset {
             self.sep();
-            self.write_keyword("OFFSET ");
-            self.gen_expr(offset);
+            if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                self.write_keyword("OFFSET ");
+                self.gen_expr(offset);
+                self.write(" ");
+                self.write_keyword("ROWS");
+            } else {
+                self.write_keyword("OFFSET ");
+                self.gen_expr(offset);
+            }
         }
 
         if let Some(fetch) = &sel.fetch_first {
             self.sep();
-            self.write_keyword("FETCH FIRST ");
-            self.gen_expr(fetch);
-            self.write(" ");
-            self.write_keyword("ROWS ONLY");
+            if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                self.write_keyword("FETCH NEXT ");
+                self.gen_expr(fetch);
+                self.write(" ");
+                self.write_keyword("ROWS ONLY");
+            } else {
+                self.write_keyword("FETCH FIRST ");
+                self.gen_expr(fetch);
+                self.write(" ");
+                self.write_keyword("ROWS ONLY");
+            }
         }
     }
 
@@ -734,6 +748,14 @@ impl Generator {
             self.write(")");
         }
 
+        // T-SQL: OUTPUT goes before VALUES
+        if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric))
+            && !ins.returning.is_empty()
+        {
+            self.sep();
+            self.gen_output_clause(&ins.returning, "INSERTED");
+        }
+
         match &ins.source {
             InsertSource::Values(rows) => {
                 self.sep();
@@ -800,7 +822,10 @@ impl Generator {
             }
         }
 
-        if !ins.returning.is_empty() {
+        // Non-T-SQL: RETURNING goes after VALUES
+        if !matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric))
+            && !ins.returning.is_empty()
+        {
             self.sep();
             self.write_keyword("RETURNING ");
             for (i, item) in ins.returning.iter().enumerate() {
@@ -866,12 +891,16 @@ impl Generator {
 
         if !upd.returning.is_empty() {
             self.sep();
-            self.write_keyword("RETURNING ");
-            for (i, item) in upd.returning.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
+            if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                self.gen_output_clause(&upd.returning, "INSERTED");
+            } else {
+                self.write_keyword("RETURNING ");
+                for (i, item) in upd.returning.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.gen_select_item(item);
                 }
-                self.gen_select_item(item);
             }
         }
     }
@@ -888,6 +917,14 @@ impl Generator {
             self.gen_table_source(&using.source);
         }
 
+        // T-SQL: OUTPUT clause comes before WHERE
+        if !del.returning.is_empty()
+            && matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric))
+        {
+            self.sep();
+            self.gen_output_clause(&del.returning, "DELETED");
+        }
+
         if let Some(wh) = &del.where_clause {
             self.sep();
             self.write_keyword("WHERE");
@@ -902,7 +939,10 @@ impl Generator {
             }
         }
 
-        if !del.returning.is_empty() {
+        // Non-T-SQL: RETURNING after WHERE
+        if !del.returning.is_empty()
+            && !matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric))
+        {
             self.sep();
             self.write_keyword("RETURNING ");
             for (i, item) in del.returning.iter().enumerate() {
@@ -915,6 +955,44 @@ impl Generator {
     }
 
     // ── CREATE TABLE ────────────────────────────────────────────
+
+    /// Emit a T-SQL OUTPUT clause: `OUTPUT prefix.col1, prefix.col2`
+    fn gen_output_clause(&mut self, items: &[SelectItem], prefix: &str) {
+        self.write_keyword("OUTPUT ");
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            match item {
+                SelectItem::Wildcard => {
+                    self.write(prefix);
+                    self.write(".*");
+                }
+                SelectItem::QualifiedWildcard { table } => {
+                    self.write(prefix);
+                    self.write(".");
+                    self.write(table);
+                    self.write(".*");
+                }
+                SelectItem::Expr { expr, .. } => match expr {
+                    Expr::Column { name, .. } => {
+                        self.write(prefix);
+                        self.write(".");
+                        self.write(name);
+                    }
+                    Expr::Star | Expr::Wildcard => {
+                        self.write(prefix);
+                        self.write(".*");
+                    }
+                    _ => {
+                        self.write(prefix);
+                        self.write(".");
+                        self.gen_expr(expr);
+                    }
+                },
+            }
+        }
+    }
 
     // ── MERGE ───────────────────────────────────────────────────
 
@@ -1602,7 +1680,13 @@ impl Generator {
                 self.write(&s.replace('\'', "''"));
                 self.write("'");
             }
-            Expr::Boolean(b) => self.write(if *b { "TRUE" } else { "FALSE" }),
+            Expr::Boolean(b) => {
+                if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                    self.write(if *b { "1" } else { "0" });
+                } else {
+                    self.write(if *b { "TRUE" } else { "FALSE" });
+                }
+            }
             Expr::Null => self.write("NULL"),
             Expr::Default => self.write_keyword("DEFAULT"),
             Expr::Wildcard | Expr::Star => self.write("*"),
@@ -1819,6 +1903,26 @@ impl Generator {
                     self.gen_expr(esc);
                 }
             }
+            Expr::SimilarTo {
+                expr,
+                pattern,
+                negated,
+                escape,
+            } => {
+                self.gen_expr(expr);
+                if *negated {
+                    self.write(" ");
+                    self.write_keyword("NOT");
+                }
+                self.write(" ");
+                self.write_keyword("SIMILAR TO ");
+                self.gen_expr(pattern);
+                if let Some(esc) = escape {
+                    self.write(" ");
+                    self.write_keyword("ESCAPE ");
+                    self.gen_expr(esc);
+                }
+            }
             Expr::Case {
                 operand,
                 when_clauses,
@@ -1923,12 +2027,27 @@ impl Generator {
                 self.write(")");
             }
             Expr::Extract { field, expr } => {
-                self.write_keyword("EXTRACT(");
-                self.gen_datetime_field(field);
-                self.write(" ");
-                self.write_keyword("FROM ");
-                self.gen_expr(expr);
-                self.write(")");
+                if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                    if *field == DateTimeField::Epoch {
+                        // EXTRACT(EPOCH FROM x) → DATEDIFF(SECOND, '1970-01-01', x)
+                        self.write_keyword("DATEDIFF(SECOND, '1970-01-01', ");
+                        self.gen_expr(expr);
+                        self.write(")");
+                    } else {
+                        self.write_keyword("DATEPART(");
+                        self.gen_datetime_field(field);
+                        self.write(", ");
+                        self.gen_expr(expr);
+                        self.write(")");
+                    }
+                } else {
+                    self.write_keyword("EXTRACT(");
+                    self.gen_datetime_field(field);
+                    self.write(" ");
+                    self.write_keyword("FROM ");
+                    self.gen_expr(expr);
+                    self.write(")");
+                }
             }
             Expr::Interval { value, unit } => {
                 self.write_keyword("INTERVAL ");

@@ -7,16 +7,14 @@ use sqlglot_rust::{Dialect, generate, parse, transpile};
 
 /// Parse SQL → generate SQL, assert output == input (identity round-trip).
 fn validate_identity(sql: &str, dialect: Dialect) {
-    let ast =
-        parse(sql, dialect).unwrap_or_else(|e| panic!("Parse failed for '{}': {}", sql, e));
+    let ast = parse(sql, dialect).unwrap_or_else(|e| panic!("Parse failed for '{}': {}", sql, e));
     let output = generate(&ast, dialect);
     assert_eq!(output, sql, "\n  Identity roundtrip failed");
 }
 
 /// Parse SQL → generate SQL, assert output == expected.
 fn validate(sql: &str, expected: &str, dialect: Dialect) {
-    let ast =
-        parse(sql, dialect).unwrap_or_else(|e| panic!("Parse failed for '{}': {}", sql, e));
+    let ast = parse(sql, dialect).unwrap_or_else(|e| panic!("Parse failed for '{}': {}", sql, e));
     let output = generate(&ast, dialect);
     assert_eq!(output, expected, "\n  Input: {}", sql);
 }
@@ -27,10 +25,7 @@ fn validate(sql: &str, expected: &str, dialect: Dialect) {
 
 #[test]
 fn test_double_quoted_select_alias_roundtrip() {
-    validate_identity(
-        r#"SELECT 7 AS "Mixed""#,
-        Dialect::Postgres,
-    );
+    validate_identity(r#"SELECT 7 AS "Mixed""#, Dialect::Postgres);
 }
 
 #[test]
@@ -118,12 +113,7 @@ fn test_subquery_alias_quoted_roundtrip() {
 
 #[test]
 fn test_cross_dialect_pg_to_mysql_alias() {
-    let result = transpile(
-        r#"SELECT 7 AS "Mixed""#,
-        Dialect::Postgres,
-        Dialect::Mysql,
-    )
-    .unwrap();
+    let result = transpile(r#"SELECT 7 AS "Mixed""#, Dialect::Postgres, Dialect::Mysql).unwrap();
     assert_eq!(result, "SELECT 7 AS `Mixed`");
 }
 
@@ -133,12 +123,7 @@ fn test_cross_dialect_pg_to_mysql_alias() {
 
 #[test]
 fn test_cross_dialect_pg_to_tsql_alias() {
-    let result = transpile(
-        r#"SELECT 7 AS "Mixed""#,
-        Dialect::Postgres,
-        Dialect::Tsql,
-    )
-    .unwrap();
+    let result = transpile(r#"SELECT 7 AS "Mixed""#, Dialect::Postgres, Dialect::Tsql).unwrap();
     assert_eq!(result, "SELECT 7 AS [Mixed]");
 }
 
@@ -148,10 +133,7 @@ fn test_cross_dialect_pg_to_tsql_alias() {
 
 #[test]
 fn test_unquoted_aliases_unchanged() {
-    validate_identity(
-        "SELECT 1 AS foo, 2 AS bar FROM t AS x",
-        Dialect::Ansi,
-    );
+    validate_identity("SELECT 1 AS foo, 2 AS bar FROM t AS x", Dialect::Ansi);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -160,20 +142,12 @@ fn test_unquoted_aliases_unchanged() {
 
 #[test]
 fn test_backtick_alias_roundtrip_mysql() {
-    validate_identity(
-        "SELECT 1 AS `Mixed`",
-        Dialect::Mysql,
-    );
+    validate_identity("SELECT 1 AS `Mixed`", Dialect::Mysql);
 }
 
 #[test]
 fn test_backtick_to_doublequote_mysql_to_pg() {
-    let result = transpile(
-        "SELECT 1 AS `Mixed`",
-        Dialect::Mysql,
-        Dialect::Postgres,
-    )
-    .unwrap();
+    let result = transpile("SELECT 1 AS `Mixed`", Dialect::Mysql, Dialect::Postgres).unwrap();
     assert_eq!(result, r#"SELECT 1 AS "Mixed""#);
 }
 

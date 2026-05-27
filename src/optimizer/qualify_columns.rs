@@ -333,7 +333,12 @@ fn qualify_select<S: Schema>(
                     new_columns.push(SelectItem::QualifiedWildcard { table });
                 }
             }
-            SelectItem::Expr { expr, alias, alias_quote_style, .. } => {
+            SelectItem::Expr {
+                expr,
+                alias,
+                alias_quote_style,
+                ..
+            } => {
                 let qualified_expr = qualify_expr(expr, &source_map, schema, dialect, &cte_columns);
                 new_columns.push(SelectItem::Expr {
                     expr: qualified_expr,

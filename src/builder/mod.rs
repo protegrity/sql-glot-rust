@@ -881,9 +881,11 @@ impl SelectBuilder {
     pub fn columns(mut self, cols: &[&str]) -> Self {
         for col in cols {
             if let Some(expr) = parse_expr_dialect(col, self.dialect) {
-                self.statement
-                    .columns
-                    .push(SelectItem::Expr { expr, alias: None, alias_quote_style: QuoteStyle::None });
+                self.statement.columns.push(SelectItem::Expr {
+                    expr,
+                    alias: None,
+                    alias_quote_style: QuoteStyle::None,
+                });
             }
         }
         self
@@ -1264,7 +1266,11 @@ impl SelectStatement {
     /// Add a column with dialect-specific parsing.
     pub fn add_select_dialect(&mut self, expr_str: &str, dialect: Dialect) {
         if let Some(expr) = parse_expr_dialect(expr_str, dialect) {
-            self.columns.push(SelectItem::Expr { expr, alias: None, alias_quote_style: QuoteStyle::None });
+            self.columns.push(SelectItem::Expr {
+                expr,
+                alias: None,
+                alias_quote_style: QuoteStyle::None,
+            });
         }
     }
 
