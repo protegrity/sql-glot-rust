@@ -393,7 +393,10 @@ impl Generator {
 
         if let Some(offset) = &sel.offset {
             self.sep();
-            if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+            if matches!(
+                self.dialect,
+                Some(Dialect::Tsql) | Some(Dialect::Fabric) | Some(Dialect::Oracle)
+            ) {
                 self.write_keyword("OFFSET ");
                 self.gen_expr(offset);
                 self.write(" ");
