@@ -2897,6 +2897,31 @@ impl Parser {
                     });
                 }
 
+                // ── Bare niladic temporal keywords: CURRENT_TIME, CURRENT_DATE,
+                //    CURRENT_TIMESTAMP, LOCALTIMESTAMP (no parens) ──
+                // ANSI SQL allows these without parentheses. Materialize them
+                // as typed functions so the generator can emit dialect-specific
+                // forms (e.g. TSQL requires CAST(GETDATE() AS TIME) rather than
+                // a bare CURRENT_TIME reserved word).
+                if name_qs == QuoteStyle::None && self.peek_type() != &TokenType::LParen {
+                    let upper = name.to_ascii_uppercase();
+                    let typed = match upper.as_str() {
+                        "CURRENT_DATE" => Some(TypedFunction::CurrentDate),
+                        "CURRENT_TIME" => Some(TypedFunction::CurrentTime),
+                        "CURRENT_TIMESTAMP" | "LOCALTIMESTAMP" => {
+                            Some(TypedFunction::CurrentTimestamp)
+                        }
+                        _ => None,
+                    };
+                    if let Some(tf) = typed {
+                        return Ok(Expr::TypedFunction {
+                            func: tf,
+                            filter: None,
+                            over: None,
+                        });
+                    }
+                }
+
                 // Function call: name(...)
                 if self.peek_type() == &TokenType::LParen {
                     self.advance();
@@ -3191,6 +3216,7 @@ impl Parser {
                 }
             }
             "CURRENT_DATE" => TypedFunction::CurrentDate,
+            "CURRENT_TIME" | "CURTIME" => TypedFunction::CurrentTime,
             "CURRENT_TIMESTAMP" | "NOW" | "GETDATE" | "SYSDATE" => TypedFunction::CurrentTimestamp,
             "STR_TO_TIME" | "STR_TO_DATE" | "TO_TIMESTAMP" | "PARSE_TIMESTAMP"
             | "PARSE_DATETIME" => {

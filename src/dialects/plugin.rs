@@ -294,6 +294,7 @@ fn typed_function_canonical_name(func: &TypedFunction) -> &'static str {
         TypedFunction::DateTrunc { .. } => "DATE_TRUNC",
         TypedFunction::DateSub { .. } => "DATE_SUB",
         TypedFunction::CurrentDate => "CURRENT_DATE",
+        TypedFunction::CurrentTime => "CURRENT_TIME",
         TypedFunction::CurrentTimestamp => "NOW",
         TypedFunction::StrToTime { .. } => "STR_TO_TIME",
         TypedFunction::TimeToStr { .. } => "TIME_TO_STR",
@@ -368,7 +369,9 @@ fn typed_function_canonical_name(func: &TypedFunction) -> &'static str {
 /// Extract the argument expressions from a TypedFunction (in positional order).
 fn typed_function_args(func: &TypedFunction) -> Vec<Expr> {
     match func {
-        TypedFunction::CurrentDate | TypedFunction::CurrentTimestamp => vec![],
+        TypedFunction::CurrentDate
+        | TypedFunction::CurrentTime
+        | TypedFunction::CurrentTimestamp => vec![],
         TypedFunction::RowNumber | TypedFunction::Rank | TypedFunction::DenseRank => vec![],
         TypedFunction::Length { expr }
         | TypedFunction::Upper { expr }

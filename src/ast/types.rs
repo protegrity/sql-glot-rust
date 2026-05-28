@@ -636,6 +636,8 @@ pub enum TypedFunction {
     },
     /// `CURRENT_DATE`
     CurrentDate,
+    /// `CURRENT_TIME` — returns the current time of day (ANSI / PostgreSQL).
+    CurrentTime,
     /// `CURRENT_TIMESTAMP` / `NOW()` / `GETDATE()`
     CurrentTimestamp,
     /// `STR_TO_TIME(expr, format)` / `TO_TIMESTAMP` / `PARSE_DATETIME`
@@ -885,7 +887,9 @@ impl TypedFunction {
                 end.walk(visitor);
             }
             TypedFunction::DateTrunc { expr, .. } => expr.walk(visitor),
-            TypedFunction::CurrentDate | TypedFunction::CurrentTimestamp => {}
+            TypedFunction::CurrentDate
+            | TypedFunction::CurrentTime
+            | TypedFunction::CurrentTimestamp => {}
             TypedFunction::StrToTime { expr, format }
             | TypedFunction::TimeToStr { expr, format } => {
                 expr.walk(visitor);
@@ -1147,6 +1151,7 @@ impl TypedFunction {
                 unit,
             },
             TypedFunction::CurrentDate => TypedFunction::CurrentDate,
+            TypedFunction::CurrentTime => TypedFunction::CurrentTime,
             TypedFunction::CurrentTimestamp => TypedFunction::CurrentTimestamp,
             TypedFunction::StrToTime { expr, format } => TypedFunction::StrToTime {
                 expr: Box::new(expr.transform(func)),

@@ -861,6 +861,7 @@ fn infer_typed_function_type(func: &TypedFunction, ann: &TypeAnnotations) -> Opt
         | TypedFunction::TsOrDsToDate { .. } => Some(DataType::Date),
         TypedFunction::DateDiff { .. } => Some(DataType::Int),
         TypedFunction::CurrentDate => Some(DataType::Date),
+        TypedFunction::CurrentTime => Some(DataType::Time { precision: None }),
         TypedFunction::CurrentTimestamp => Some(DataType::Timestamp {
             precision: None,
             with_tz: false,

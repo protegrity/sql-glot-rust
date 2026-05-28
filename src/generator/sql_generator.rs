@@ -99,6 +99,22 @@ impl Generator {
         self.write(s);
     }
 
+    /// Emit a column/table alias, automatically wrapping it in the target
+    /// dialect's canonical quoting style when the alias collides with a
+    /// reserved keyword for that dialect. Preserves any explicit quoting
+    /// the source already specified.
+    fn write_alias(&mut self, alias: &str, style: QuoteStyle) {
+        let effective = if !style.is_quoted()
+            && matches!(self.dialect, Some(d) if crate::dialects::is_tsql_family(d))
+            && crate::dialects::is_tsql_reserved(alias)
+        {
+            QuoteStyle::Bracket
+        } else {
+            style
+        };
+        self.write_quoted(alias, effective);
+    }
+
     /// Write an identifier with the given quoting style.
     /// If a target dialect is set and the identifier is quoted, the quoting
     /// is transformed to the target dialect's canonical style.
@@ -457,7 +473,7 @@ impl Generator {
                 if let Some(alias) = alias {
                     self.write(" ");
                     self.write_keyword("AS ");
-                    self.write_quoted(alias, *alias_quote_style);
+                    self.write_alias(alias, *alias_quote_style);
                 }
             }
         }
@@ -479,7 +495,7 @@ impl Generator {
                     if !self.omit_table_alias_as() {
                         self.write_keyword("AS ");
                     }
-                    self.write_quoted(alias, *alias_quote_style);
+                    self.write_alias(alias, *alias_quote_style);
                 }
             }
             TableSource::TableFunction {
@@ -497,7 +513,7 @@ impl Generator {
                     if !self.omit_table_alias_as() {
                         self.write_keyword("AS ");
                     }
-                    self.write_quoted(alias, *alias_quote_style);
+                    self.write_alias(alias, *alias_quote_style);
                 }
             }
             TableSource::Lateral { source } => {
@@ -595,7 +611,7 @@ impl Generator {
             if let Some(alias) = &pv.alias {
                 self.write(" ");
                 self.write_keyword("AS ");
-                self.write_quoted(alias, pv.alias_quote_style);
+                self.write_alias(alias, pv.alias_quote_style);
             }
         }
     }
@@ -620,7 +636,7 @@ impl Generator {
             if !self.omit_table_alias_as() {
                 self.write_keyword("AS ");
             }
-            self.write_quoted(alias, table.alias_quote_style);
+            self.write_alias(alias, table.alias_quote_style);
         }
     }
 
@@ -2459,6 +2475,15 @@ impl Generator {
                     self.write_keyword("CURRENT_DATE()");
                 } else {
                     self.write_keyword("CURRENT_DATE");
+                }
+            }
+            TypedFunction::CurrentTime => {
+                if is_tsql {
+                    self.write_keyword("CAST(GETDATE() AS TIME)");
+                } else if is_mysql || is_hive_family {
+                    self.write_keyword("CURRENT_TIME()");
+                } else {
+                    self.write_keyword("CURRENT_TIME");
                 }
             }
             TypedFunction::CurrentTimestamp => {
