@@ -1554,6 +1554,40 @@ fn test_oracle_identity() {
     }
 }
 
+// CR-011: Oracle OFFSET must include ROWS keyword (ORA-02000 without it).
+#[test]
+fn test_oracle_offset_fetch_roundtrip() {
+    let input = "SELECT a, b FROM t ORDER BY a OFFSET 10 ROWS FETCH FIRST 25 ROWS ONLY";
+    assert_identity(input, Dialect::Oracle);
+}
+
+#[test]
+fn test_oracle_offset_only_rows_keyword() {
+    let input = "SELECT * FROM t ORDER BY id OFFSET 3 ROWS";
+    assert_identity(input, Dialect::Oracle);
+}
+
+#[test]
+fn test_pg_to_oracle_limit_offset() {
+    assert_transpile(
+        "SELECT id, name FROM users ORDER BY id LIMIT 20 OFFSET 5",
+        "SELECT id, name FROM users ORDER BY id OFFSET 5 ROWS FETCH FIRST 20 ROWS ONLY",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_limit_offset_no_order_by() {
+    // Oracle does not require ORDER BY with OFFSET/FETCH (unlike T-SQL).
+    assert_transpile(
+        "SELECT * FROM t LIMIT 10 OFFSET 5",
+        "SELECT * FROM t OFFSET 5 ROWS FETCH FIRST 10 ROWS ONLY",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
 // ── PostgreSQL (from test_postgres.py) ──
 
 #[test]
