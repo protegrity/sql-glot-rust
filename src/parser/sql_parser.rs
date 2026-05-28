@@ -472,12 +472,16 @@ impl Parser {
         };
 
         let offset = if self.match_token(TokenType::Offset) {
-            Some(self.parse_expr()?)
+            let expr = self.parse_expr()?;
+            // T-SQL / ANSI SQL:2008 form: OFFSET n ROWS [FETCH …].
+            // Consume the optional ROWS/ROW keyword so FETCH can match next.
+            let _ = self.match_token(TokenType::Rows) || self.match_keyword("ROW");
+            Some(expr)
         } else {
             None
         };
 
-        // FETCH FIRST|NEXT n ROWS ONLY (Oracle / ANSI SQL:2008)
+        // FETCH FIRST|NEXT n ROWS ONLY (Oracle / ANSI SQL:2008 / T-SQL)
         let fetch_first = if self.match_token(TokenType::Fetch) {
             // consume FIRST or NEXT
             let _ = self.match_token(TokenType::First) || self.match_token(TokenType::Next);

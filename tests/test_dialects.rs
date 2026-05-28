@@ -1656,6 +1656,53 @@ fn test_tsql_identity() {
     }
 }
 
+// CR-010: T-SQL OFFSET/FETCH must survive parse→generate roundtrip.
+#[test]
+fn test_tsql_offset_fetch_roundtrip_preserved() {
+    let input = "SELECT * FROM t ORDER BY id OFFSET 10 ROWS FETCH NEXT 25 ROWS ONLY";
+    assert_identity(input, Dialect::Tsql);
+}
+
+#[test]
+fn test_tsql_offset_fetch_with_subquery_order_roundtrip() {
+    let input = "SELECT a, b FROM t ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY";
+    assert_identity(input, Dialect::Tsql);
+}
+
+#[test]
+fn test_tsql_offset_only_no_fetch_roundtrip() {
+    // OFFSET without FETCH is valid T-SQL (skip n, return all remaining).
+    let input = "SELECT * FROM t ORDER BY id OFFSET 5 ROWS";
+    assert_identity(input, Dialect::Tsql);
+}
+
+#[test]
+fn test_pg_limit_offset_transpile_then_tsql_roundtrip() {
+    use sqlglot_rust::{generate, parse, transpile};
+    let transpiled = transpile(
+        "SELECT id, name FROM users ORDER BY id LIMIT 20 OFFSET 40",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    )
+    .unwrap();
+    assert!(
+        transpiled.to_uppercase().contains("FETCH NEXT"),
+        "transpile lost FETCH: {transpiled}"
+    );
+    let stmt = parse(&transpiled, Dialect::Tsql).unwrap();
+    let regenerated = generate(&stmt, Dialect::Tsql);
+    assert!(
+        regenerated
+            .to_uppercase()
+            .contains("FETCH NEXT 20 ROWS ONLY"),
+        "roundtrip lost FETCH: {regenerated}"
+    );
+    assert!(
+        regenerated.to_uppercase().contains("OFFSET 40 ROWS"),
+        "roundtrip lost OFFSET: {regenerated}"
+    );
+}
+
 // ── Trino (from test_trino via Presto) ──
 
 #[test]
