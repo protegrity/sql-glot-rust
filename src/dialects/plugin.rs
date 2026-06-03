@@ -633,6 +633,8 @@ fn transform_expr_plugin(expr: Expr, target: &DialectRef) -> Expr {
                         distinct: false,
                         filter: filter.map(|f| Box::new(transform_expr_plugin(*f, target))),
                         over,
+                        order_by: vec![],
+                        within_group: false,
                     };
                 }
             }
@@ -649,6 +651,8 @@ fn transform_expr_plugin(expr: Expr, target: &DialectRef) -> Expr {
             distinct,
             filter,
             over,
+            order_by,
+            within_group,
         } => {
             let new_name = target.map_function_name(&name);
             let new_args: Vec<Expr> = args
@@ -661,6 +665,8 @@ fn transform_expr_plugin(expr: Expr, target: &DialectRef) -> Expr {
                 distinct,
                 filter: filter.map(|f| Box::new(transform_expr_plugin(*f, target))),
                 over,
+                order_by,
+                within_group,
             }
         }
         Expr::Cast { expr, data_type } => Expr::Cast {

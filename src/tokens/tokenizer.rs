@@ -168,7 +168,14 @@ impl Tokenizer {
             '.' => Ok(self.make_token(TokenType::Dot, ".", start, start_line, start_col)),
             '+' => Ok(self.make_token(TokenType::Plus, "+", start, start_line, start_col)),
             '~' => Ok(self.make_token(TokenType::BitwiseNot, "~", start, start_line, start_col)),
-            '@' => Ok(self.make_token(TokenType::AtSign, "@", start, start_line, start_col)),
+            '@' => {
+                if self.peek() == Some('>') {
+                    self.advance();
+                    Ok(self.make_token(TokenType::AtArrow, "@>", start, start_line, start_col))
+                } else {
+                    Ok(self.make_token(TokenType::AtSign, "@", start, start_line, start_col))
+                }
+            }
             '=' => Ok(self.make_token(TokenType::Eq, "=", start, start_line, start_col)),
             '*' => Ok(self.make_token(TokenType::Star, "*", start, start_line, start_col)),
             '%' => Ok(self.make_token(TokenType::Percent2, "%", start, start_line, start_col)),
@@ -269,8 +276,9 @@ impl Tokenizer {
                     Ok(self.make_token(TokenType::Neq, "<>", start, start_line, start_col))
                 } else if self.peek() == Some('<') {
                     self.advance();
-                    Ok(self.make_token(TokenType::ShiftLeft, "<<", start, start_line, start_col))
-                } else {
+                    Ok(self.make_token(TokenType::ShiftLeft, "<<", start, start_line, start_col))                } else if self.peek() == Some('@') {
+                    self.advance();
+                    Ok(self.make_token(TokenType::ArrowAt, "<@", start, start_line, start_col))                } else {
                     Ok(self.make_token(TokenType::Lt, "<", start, start_line, start_col))
                 }
             }

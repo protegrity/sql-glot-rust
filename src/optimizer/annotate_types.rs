@@ -677,7 +677,7 @@ fn infer_binary_op_type(
     use BinaryOperator::*;
     match op {
         // Comparison operators → Boolean
-        Eq | Neq | Lt | Gt | LtEq | GtEq => Some(DataType::Boolean),
+        Eq | Neq | Lt | Gt | LtEq | GtEq | AtArrow | ArrowAt => Some(DataType::Boolean),
 
         // Logical operators → Boolean
         And | Or | Xor => Some(DataType::Boolean),

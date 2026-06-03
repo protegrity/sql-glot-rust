@@ -98,6 +98,16 @@ pub enum Statement {
     Merge(MergeStatement),
     /// Raw / passthrough expression (for expressions that don't fit a specific statement type)
     Expression(Expr),
+    /// Catch-all for statements that the parser accepts for round-tripping
+    /// but does not model in detail (e.g. `SET extra_float_digits = 0`,
+    /// `SHOW VARIABLES LIKE 'innodb%'`, `GO`, `DECLARE @x INT = 1`,
+    /// `COMMENT ON COLUMN t.c IS 'x'`, `CREATE OPERATOR FAMILY …`,
+    /// vendor-specific `ALTER TABLE … COMPACT 'major'`).
+    ///
+    /// The verb (`kind`) preserves the original keyword(s) so the generator
+    /// can emit a literal round-trip; `body` is the raw rest of the
+    /// statement up to the terminating semicolon/EOF.
+    Command(CommandStatement),
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -364,6 +374,17 @@ pub enum Expr {
         filter: Option<Box<Expr>>,
         /// OVER window specification for window functions
         over: Option<WindowSpec>,
+        /// Inline ORDER BY inside the argument list, or a trailing
+        /// WITHIN GROUP (ORDER BY …) clause. Both surface forms are
+        /// stored here; the generator picks the right emission based
+        /// on `within_group`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        order_by: Vec<OrderByItem>,
+        /// True iff the ORDER BY originally came from a trailing
+        /// `WITHIN GROUP (ORDER BY …)` clause rather than an inline
+        /// `ORDER BY` inside the argument list.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        within_group: bool,
     },
     /// `expr BETWEEN low AND high`
     Between {
@@ -1482,6 +1503,10 @@ pub enum BinaryOperator {
     Arrow,
     /// `->>` JSON text access
     DoubleArrow,
+    /// `@>` PostgreSQL "contains" (arrays / jsonb / range)
+    AtArrow,
+    /// `<@` PostgreSQL "is contained by"
+    ArrowAt,
 }
 
 /// Unary operators.
@@ -1764,6 +1789,28 @@ pub struct UseStatement {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
     pub name: String,
+}
+
+/// A raw-tail statement preserved verbatim for round-tripping.
+///
+/// Used for statements the parser accepts but does not model in detail —
+/// `SET`, `SHOW`, `GO`, `DECLARE`, `COMMENT ON …`, `ANALYZE`, `DESCRIBE`,
+/// `LOAD`, `EXPLAIN (FORMAT …)`, vendor-specific `ALTER TABLE` tails,
+/// `CREATE OPERATOR/AGGREGATE/SEQUENCE/…`, etc. The verb sequence is
+/// preserved in `kind` and the remainder of the statement (up to the next
+/// `;` or EOF) is captured in `body` exactly as it appeared in the input.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommandStatement {
+    /// Comments attached to this statement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
+    /// Leading verb(s), uppercased — e.g. "SET", "SHOW", "GO",
+    /// "DECLARE", "COMMENT ON", "ANALYZE", "DESCRIBE", "LOAD",
+    /// "CREATE OPERATOR", "ALTER TABLE", "REM".
+    pub kind: String,
+    /// Raw tail of the statement (everything after `kind`), reproduced
+    /// verbatim so round-tripping preserves the original wording.
+    pub body: String,
 }
 
 /// A DROP TABLE statement.
@@ -2070,12 +2117,16 @@ impl Expr {
                 distinct,
                 filter,
                 over,
+                order_by,
+                within_group,
             } => Expr::Function {
                 name,
                 args: args.into_iter().map(|a| a.transform(func)).collect(),
                 distinct,
                 filter: filter.map(|f| Box::new(f.transform(func))),
                 over,
+                order_by,
+                within_group,
             },
             Expr::Nested(inner) => Expr::Nested(Box::new(inner.transform(func))),
             Expr::Cast { expr, data_type } => Expr::Cast {

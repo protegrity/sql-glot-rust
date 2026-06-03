@@ -762,6 +762,8 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
             distinct,
             filter,
             over,
+            order_by,
+            within_group,
         } => {
             let new_name = map_function_name(&name, target);
             let new_args: Vec<Expr> = args
@@ -774,6 +776,8 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
                 distinct,
                 filter: filter.map(|f| Box::new(transform_expr(*f, target))),
                 over,
+                order_by,
+                within_group,
             }
         }
         // Recurse into typed function child expressions, with special handling
@@ -856,6 +860,8 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
                     distinct: false,
                     filter: None,
                     over: None,
+                    order_by: vec![],
+                    within_group: false,
                 };
             }
 
@@ -1337,6 +1343,8 @@ fn transform_quotes(expr: Expr, target: Dialect) -> Expr {
             distinct,
             filter,
             over,
+            order_by,
+            within_group,
         } => Expr::Function {
             name,
             args: args
@@ -1346,6 +1354,8 @@ fn transform_quotes(expr: Expr, target: Dialect) -> Expr {
             distinct,
             filter: filter.map(|f| Box::new(transform_quotes(*f, target))),
             over,
+            order_by,
+            within_group,
         },
         Expr::TypedFunction { func, filter, over } => Expr::TypedFunction {
             func: func.transform_children(&|e| transform_quotes(e, target)),
@@ -1468,6 +1478,8 @@ fn try_transform_interval_arithmetic(
                 distinct: false,
                 filter: None,
                 over: None,
+                order_by: vec![],
+                within_group: false,
             });
         }
     }
@@ -1491,6 +1503,8 @@ fn try_transform_interval_arithmetic(
                     distinct: false,
                     filter: None,
                     over: None,
+                    order_by: vec![],
+                    within_group: false,
                 });
             }
         }

@@ -251,6 +251,18 @@ impl Generator {
                 self.gen_merge(s);
             }
             Statement::Expression(e) => self.gen_expr(e),
+            Statement::Command(s) => {
+                self.gen_comments(&s.comments);
+                self.gen_command(s);
+            }
+        }
+    }
+
+    fn gen_command(&mut self, c: &crate::ast::CommandStatement) {
+        self.write(&c.kind);
+        if !c.body.is_empty() {
+            self.write(" ");
+            self.write(&c.body);
         }
     }
 
@@ -684,6 +696,28 @@ impl Generator {
         }
         if self.pretty {
             self.indent_down();
+        }
+    }
+
+    fn gen_order_by_items_inline(&mut self, items: &[OrderByItem]) {
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.gen_expr(&item.expr);
+            if !item.ascending {
+                self.write(" ");
+                self.write_keyword("DESC");
+            }
+            if let Some(nulls_first) = item.nulls_first {
+                if nulls_first {
+                    self.write(" ");
+                    self.write_keyword("NULLS FIRST");
+                } else {
+                    self.write(" ");
+                    self.write_keyword("NULLS LAST");
+                }
+            }
         }
     }
 
@@ -1654,6 +1688,8 @@ impl Generator {
             BinaryOperator::ShiftRight => " >> ",
             BinaryOperator::Arrow => " -> ",
             BinaryOperator::DoubleArrow => " ->> ",
+            BinaryOperator::AtArrow => " @> ",
+            BinaryOperator::ArrowAt => " <@ ",
         }
     }
 
@@ -1778,6 +1814,8 @@ impl Generator {
                 distinct,
                 filter,
                 over,
+                order_by,
+                within_group,
             } => {
                 self.write(name);
                 self.write("(");
@@ -1785,7 +1823,21 @@ impl Generator {
                     self.write_keyword("DISTINCT ");
                 }
                 self.gen_expr_list(args);
+                // Aggregate ORDER BY embedded in the argument list (not WITHIN GROUP).
+                if !*within_group && !order_by.is_empty() {
+                    self.write(" ");
+                    self.write_keyword("ORDER BY ");
+                    self.gen_order_by_items_inline(order_by);
+                }
                 self.write(")");
+
+                // WITHIN GROUP (ORDER BY ...) — ordered-set aggregates.
+                if *within_group && !order_by.is_empty() {
+                    self.write(" ");
+                    self.write_keyword("WITHIN GROUP (ORDER BY ");
+                    self.gen_order_by_items_inline(order_by);
+                    self.write(")");
+                }
 
                 if let Some(filter_expr) = filter {
                     self.write(" ");

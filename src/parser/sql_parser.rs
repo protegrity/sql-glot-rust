@@ -158,6 +158,161 @@ impl Parser {
         }
     }
 
+    /// Reconstruct a single token's surface representation for raw command
+    /// preservation. String literals are wrapped in their original quotes;
+    /// identifiers may carry a quote_char from the tokenizer.
+    fn token_text(token: &Token) -> String {
+        match token.token_type {
+            TokenType::String => format!("'{}'", token.value.replace('\'', "''")),
+            TokenType::Identifier if token.quote_char != '\0' => {
+                let (l, r) = match token.quote_char {
+                    '[' => ('[', ']'),
+                    c => (c, c),
+                };
+                format!("{l}{}{r}", token.value)
+            }
+            _ => token.value.clone(),
+        }
+    }
+
+    /// Join a slice of tokens with whitespace tuned for SQL — no space
+    /// before `,` `)` `;` `.`, no space after `(` or `.`.
+    fn join_tokens_for_raw(tokens: &[Token]) -> String {
+        let mut out = String::new();
+        let mut prev_no_space_after = true; // suppress leading space
+        for t in tokens {
+            let no_space_before = matches!(
+                t.token_type,
+                TokenType::Comma
+                    | TokenType::RParen
+                    | TokenType::Semicolon
+                    | TokenType::Dot
+                    | TokenType::RBracket
+            );
+            if !out.is_empty() && !prev_no_space_after && !no_space_before {
+                out.push(' ');
+            }
+            out.push_str(&Self::token_text(t));
+            prev_no_space_after = matches!(
+                t.token_type,
+                TokenType::LParen | TokenType::Dot | TokenType::LBracket
+            );
+        }
+        out
+    }
+
+    /// Consume tokens up to (but not including) the next top-level `;` or EOF,
+    /// returning the raw text of the consumed tokens with whitespace
+    /// reconstructed by [`join_tokens_for_raw`]. Honors parenthesis depth so
+    /// embedded `;` inside `(...)` does not terminate the statement.
+    fn consume_raw_to_statement_end(&mut self) -> String {
+        let start = self.pos;
+        let mut depth: i32 = 0;
+        while self.pos < self.tokens.len() {
+            let tt = &self.tokens[self.pos].token_type;
+            match tt {
+                TokenType::Eof => break,
+                TokenType::Semicolon if depth == 0 => break,
+                TokenType::LParen | TokenType::LBracket => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                TokenType::RParen | TokenType::RBracket => {
+                    depth = (depth - 1).max(0);
+                    self.pos += 1;
+                }
+                _ => self.pos += 1,
+            }
+        }
+        Self::join_tokens_for_raw(&self.tokens[start..self.pos])
+    }
+
+    /// Helper for the dispatcher: consume one verb token (already known) and
+    /// then capture the entire tail as a [`CommandStatement`].
+    fn parse_command_kind(&mut self, kind: &str) -> Result<Statement> {
+        self.advance(); // consume the verb token
+        let body = self.consume_raw_to_statement_end();
+        Ok(Statement::Command(CommandStatement {
+            comments: vec![],
+            kind: kind.to_string(),
+            body,
+        }))
+    }
+
+    /// `COMMENT ON {TABLE|COLUMN|...} <name> IS '...'` — preserved as raw.
+    /// `COMMENT` can also appear inside `CREATE TABLE` column definitions and
+    /// in other positions; only the standalone DDL form lands here because
+    /// the dispatcher peeks at the *first* token.
+    fn parse_comment_on_command(&mut self) -> Result<Statement> {
+        // Look ahead for "COMMENT ON" — if not "ON", fall back to parser error
+        // (the COMMENT token would otherwise have been consumed inside an
+        // expression / column-def parser, not at statement boundary).
+        if self.peek_offset(1).map(|t| t.value.to_uppercase()) != Some("ON".to_string()) {
+            return Err(SqlglotError::UnexpectedToken {
+                token: self.peek().clone(),
+            });
+        }
+        self.advance(); // COMMENT
+        let body = self.consume_raw_to_statement_end();
+        Ok(Statement::Command(CommandStatement {
+            comments: vec![],
+            kind: "COMMENT".to_string(),
+            body,
+        }))
+    }
+
+    /// Returns `true` when the current Identifier token is a known
+    /// statement-starting verb that we preserve verbatim.
+    fn match_command_keyword(&self) -> bool {
+        let v = self.peek().value.to_uppercase();
+        matches!(
+            v.as_str(),
+            "GO" | "DECLARE"
+                | "LOAD"
+                | "REM"
+                | "REMARK"
+                | "RESET"
+                | "PRAGMA"
+                | "VACUUM"
+                | "REINDEX"
+                | "CALL"
+                | "LOCK"
+                | "UNLOCK"
+                | "CLUSTER"
+                | "REFRESH"
+                | "CHECKPOINT"
+                | "LISTEN"
+                | "NOTIFY"
+                | "PREPARE"
+                | "EXECUTE"
+                | "DEALLOCATE"
+                | "DISCARD"
+                | "COPY"
+                | "ATTACH"
+                | "DETACH"
+                | "COMMENT"
+        )
+    }
+
+    /// Variant of [`parse_command_kind`] for verbs that arrive as an
+    /// Identifier token (no dedicated TokenType).
+    fn parse_command_from_identifier(&mut self) -> Result<Statement> {
+        let verb = self.peek().value.to_uppercase();
+        self.advance();
+        let body = self.consume_raw_to_statement_end();
+        Ok(Statement::Command(CommandStatement {
+            comments: vec![],
+            kind: verb,
+            body,
+        }))
+    }
+
+    /// Look at the token `offset` positions ahead of the current one,
+    /// returning `None` if past EOF.
+    fn peek_offset(&self, offset: usize) -> Option<&Token> {
+        self.tokens.get(self.pos + offset)
+    }
+
     /// Helper to check if current token is an identifier or keyword that can serve as a name.
     fn is_name_token(&self) -> bool {
         matches!(
@@ -190,6 +345,14 @@ impl Parser {
                 | TokenType::Pivot
                 | TokenType::Unpivot
                 | TokenType::Sets
+                | TokenType::Range
+                | TokenType::Conflict
+                | TokenType::Unnest
+                | TokenType::Text
+                | TokenType::Show
+                | TokenType::Describe
+                | TokenType::Analyze
+                | TokenType::Index
         )
     }
 
@@ -291,15 +454,33 @@ impl Parser {
             TokenType::Update => self.parse_update().map(Statement::Update),
             TokenType::Delete => self.parse_delete().map(Statement::Delete),
             TokenType::Merge => self.parse_merge().map(Statement::Merge),
-            TokenType::Create => self.parse_create(),
+            TokenType::Create => self.parse_create_or_command(),
             TokenType::Drop => self.parse_drop(),
-            TokenType::Alter => self.parse_alter_table().map(Statement::AlterTable),
+            TokenType::Alter => self.parse_alter_or_command(),
             TokenType::Truncate => self.parse_truncate().map(Statement::Truncate),
             TokenType::Begin | TokenType::Commit | TokenType::Rollback | TokenType::Savepoint => {
                 self.parse_transaction().map(Statement::Transaction)
             }
             TokenType::Explain => self.parse_explain().map(Statement::Explain),
             TokenType::Use => self.parse_use().map(Statement::Use),
+            // Raw-tail command statements: SET / SHOW / DESCRIBE / ANALYZE
+            // (when standalone, not as part of EXPLAIN) / COMMENT ON ... .
+            // We preserve the verb plus the entire remainder up to `;` or EOF
+            // so the AST round-trips even though we don't model these in detail.
+            TokenType::Set => self.parse_command_kind("SET"),
+            TokenType::Show => self.parse_command_kind("SHOW"),
+            TokenType::Describe => self.parse_command_kind("DESCRIBE"),
+            TokenType::Analyze => self.parse_command_kind("ANALYZE"),
+            TokenType::Comment => self.parse_comment_on_command(),
+            TokenType::Grant => self.parse_command_kind("GRANT"),
+            TokenType::Revoke => self.parse_command_kind("REVOKE"),
+            // Vendor-specific verbs that tokenize as plain identifiers:
+            //   GO (T-SQL batch separator), DECLARE (T-SQL/PL-pgSQL),
+            //   LOAD (PG / MySQL extensions), REM / REMARK (SQL*Plus),
+            //   RESET / PRAGMA / VACUUM / REINDEX (PG / SQLite), CALL (PSM).
+            TokenType::Identifier if self.match_command_keyword() => {
+                self.parse_command_from_identifier()
+            }
             _ => Err(SqlglotError::UnexpectedToken {
                 token: self.peek().clone(),
             }),
@@ -2074,6 +2255,43 @@ impl Parser {
         }
     }
 
+    /// Try [`parse_alter_table`]; on failure, rewind and capture the entire
+    /// `ALTER …` statement verbatim as a [`Statement::Command`]. This covers
+    /// the long tail of vendor-specific ALTER forms — MySQL `ALTER TABLE …
+    /// CONVERT TO CHARACTER SET … COLLATE …`, Hive `ALTER TABLE … PARTITION
+    /// (…) COMPACT 'major'`, T-SQL `ALTER TABLE … WITH (…) CHECK CONSTRAINT
+    /// …`, etc. (Gap 5)
+    fn parse_alter_or_command(&mut self) -> Result<Statement> {
+        let saved = self.pos;
+        let saved_comments = self.pending_comments.clone();
+        match self.parse_alter_table() {
+            Ok(stmt) => Ok(Statement::AlterTable(stmt)),
+            Err(_) => {
+                self.pos = saved;
+                self.pending_comments = saved_comments;
+                self.parse_command_kind("ALTER")
+            }
+        }
+    }
+
+    /// Try [`parse_create`]; on failure, rewind and capture the entire
+    /// `CREATE …` statement verbatim as a [`Statement::Command`]. Also
+    /// handles the `CREATE TABLE t AS VALUES (…)` form (Gap 7) and rarer
+    /// `CREATE OPERATOR / AGGREGATE / SEQUENCE / FUNCTION / TEXT SEARCH
+    /// CONFIGURATION / …` (Gap 4).
+    fn parse_create_or_command(&mut self) -> Result<Statement> {
+        let saved = self.pos;
+        let saved_comments = self.pending_comments.clone();
+        match self.parse_create() {
+            Ok(stmt) => Ok(stmt),
+            Err(_) => {
+                self.pos = saved;
+                self.pending_comments = saved_comments;
+                self.parse_command_kind("CREATE")
+            }
+        }
+    }
+
     // ── TRUNCATE ────────────────────────────────────────────────────
 
     fn parse_truncate(&mut self) -> Result<TruncateStatement> {
@@ -2203,6 +2421,8 @@ impl Parser {
                 TokenType::Gt => Some(BinaryOperator::Gt),
                 TokenType::LtEq => Some(BinaryOperator::LtEq),
                 TokenType::GtEq => Some(BinaryOperator::GtEq),
+                TokenType::AtArrow => Some(BinaryOperator::AtArrow),
+                TokenType::ArrowAt => Some(BinaryOperator::ArrowAt),
                 _ => None,
             };
 
@@ -2536,6 +2756,8 @@ impl Parser {
                     args,
                     distinct,
                     filter,
+                    order_by,
+                    within_group,
                     ..
                 } => {
                     expr = Expr::Function {
@@ -2544,6 +2766,8 @@ impl Parser {
                         distinct,
                         filter,
                         over: Some(spec),
+                        order_by,
+                        within_group,
                     };
                 }
                 Expr::TypedFunction { func, filter, .. } => {
@@ -2569,6 +2793,8 @@ impl Parser {
                     args,
                     distinct,
                     over,
+                    order_by,
+                    within_group,
                     ..
                 } => {
                     expr = Expr::Function {
@@ -2577,6 +2803,8 @@ impl Parser {
                         distinct,
                         filter: Some(Box::new(filter_expr)),
                         over,
+                        order_by,
+                        within_group,
                     };
                 }
                 Expr::TypedFunction { func, over, .. } => {
@@ -2960,20 +3188,54 @@ impl Parser {
                     } else {
                         self.parse_expr_list()?
                     };
+
+                    // Optional aggregate ORDER BY inside arg list (Postgres / Spark):
+                    //   array_agg(x ORDER BY y DESC)
+                    //   string_agg(x, ',' ORDER BY y)
+                    let mut agg_order_by: Vec<OrderByItem> = vec![];
+                    if self.peek_type() == &TokenType::Order {
+                        self.advance();
+                        self.expect(TokenType::By)?;
+                        agg_order_by = self.parse_order_by_items()?;
+                    }
                     self.expect(TokenType::RParen)?;
 
-                    // Try to construct a typed function variant
-                    if let Some(typed) = Self::try_typed_function(&name, args.clone(), distinct) {
-                        Ok(typed)
-                    } else {
-                        Ok(Expr::Function {
-                            name,
-                            args,
-                            distinct,
-                            filter: None,
-                            over: None,
-                        })
+                    // Optional WITHIN GROUP (ORDER BY ...) — ordered-set aggregates
+                    //   percentile_cont(0.5) WITHIN GROUP (ORDER BY x)
+                    //   listagg(x, ',') WITHIN GROUP (ORDER BY x)
+                    let mut within_group = false;
+                    let mut wg_order_by: Vec<OrderByItem> = vec![];
+                    if self.check_keyword("WITHIN") {
+                        self.advance();
+                        self.expect_keyword("GROUP")?;
+                        self.expect(TokenType::LParen)?;
+                        self.expect(TokenType::Order)?;
+                        self.expect(TokenType::By)?;
+                        wg_order_by = self.parse_order_by_items()?;
+                        self.expect(TokenType::RParen)?;
+                        within_group = true;
                     }
+
+                    let final_order_by = if within_group { wg_order_by } else { agg_order_by };
+
+                    // Try to construct a typed function variant only when there are no
+                    // aggregate-specific clauses (otherwise we lose them).
+                    if final_order_by.is_empty()
+                        && !within_group
+                        && let Some(typed) = Self::try_typed_function(&name, args.clone(), distinct)
+                    {
+                        return Ok(typed);
+                    }
+
+                    Ok(Expr::Function {
+                        name,
+                        args,
+                        distinct,
+                        filter: None,
+                        over: None,
+                        order_by: final_order_by,
+                        within_group,
+                    })
                 }
                 // Qualified column: table.column or table.*
                 else if self.match_token(TokenType::Dot) {
@@ -4105,6 +4367,7 @@ fn attach_comments_to_statement(stmt: &mut Statement, comments: Vec<String>) {
         Statement::Explain(s) => s.comments = comments,
         Statement::Use(s) => s.comments = comments,
         Statement::Merge(s) => s.comments = comments,
+        Statement::Command(s) => s.comments = comments,
         // Transaction and Expression don't have comment fields
         Statement::Transaction(_) | Statement::Expression(_) => {}
     }

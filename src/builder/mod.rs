@@ -329,6 +329,8 @@ pub fn func(name: &str, args: Vec<Expr>) -> Expr {
         distinct: false,
         filter: None,
         over: None,
+        order_by: vec![],
+        within_group: false,
     }
 }
 
@@ -349,6 +351,8 @@ pub fn func_distinct(name: &str, args: Vec<Expr>) -> Expr {
         distinct: true,
         filter: None,
         over: None,
+        order_by: vec![],
+        within_group: false,
     }
 }
 
