@@ -657,6 +657,8 @@ mod tests {
             distinct: false,
             filter: None,
             over: None,
+            order_by: vec![],
+            within_group: false,
         };
         assert!(!is_pushable(&expr));
     }
@@ -674,6 +676,8 @@ mod tests {
                 order_by: vec![],
                 frame: None,
             }),
+            order_by: vec![],
+            within_group: false,
         };
         assert!(!is_pushable(&expr));
     }

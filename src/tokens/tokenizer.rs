@@ -1,6 +1,22 @@
 use crate::errors::{Result, SqlglotError};
 use crate::tokens::{Token, TokenType};
 
+/// Identifier-start predicate. Accepts ASCII `_` plus any Unicode letter,
+/// matching SQL:2003 §5.2 (PostgreSQL/MySQL/SQLite/Oracle/ClickHouse all
+/// accept Unicode letters in regular identifiers).
+#[inline]
+fn is_identifier_start(c: char) -> bool {
+    c == '_' || c.is_alphabetic()
+}
+
+/// Identifier-continue predicate. Includes Unicode alphanumerics, `_`, and `$`
+/// (MySQL/Oracle/SQL Server/SQLite all permit `$` inside identifiers after
+/// the first character).
+#[inline]
+fn is_identifier_continue(c: char) -> bool {
+    c == '_' || c == '$' || c.is_alphanumeric()
+}
+
 /// SQL tokenizer that converts a SQL string into a stream of tokens.
 ///
 /// Tracks line and column numbers for error reporting. Supports:
@@ -152,7 +168,14 @@ impl Tokenizer {
             '.' => Ok(self.make_token(TokenType::Dot, ".", start, start_line, start_col)),
             '+' => Ok(self.make_token(TokenType::Plus, "+", start, start_line, start_col)),
             '~' => Ok(self.make_token(TokenType::BitwiseNot, "~", start, start_line, start_col)),
-            '@' => Ok(self.make_token(TokenType::AtSign, "@", start, start_line, start_col)),
+            '@' => {
+                if self.peek() == Some('>') {
+                    self.advance();
+                    Ok(self.make_token(TokenType::AtArrow, "@>", start, start_line, start_col))
+                } else {
+                    Ok(self.make_token(TokenType::AtSign, "@", start, start_line, start_col))
+                }
+            }
             '=' => Ok(self.make_token(TokenType::Eq, "=", start, start_line, start_col)),
             '*' => Ok(self.make_token(TokenType::Star, "*", start, start_line, start_col)),
             '%' => Ok(self.make_token(TokenType::Percent2, "%", start, start_line, start_col)),
@@ -253,8 +276,9 @@ impl Tokenizer {
                     Ok(self.make_token(TokenType::Neq, "<>", start, start_line, start_col))
                 } else if self.peek() == Some('<') {
                     self.advance();
-                    Ok(self.make_token(TokenType::ShiftLeft, "<<", start, start_line, start_col))
-                } else {
+                    Ok(self.make_token(TokenType::ShiftLeft, "<<", start, start_line, start_col))                } else if self.peek() == Some('@') {
+                    self.advance();
+                    Ok(self.make_token(TokenType::ArrowAt, "<@", start, start_line, start_col))                } else {
                     Ok(self.make_token(TokenType::Lt, "<", start, start_line, start_col))
                 }
             }
@@ -344,7 +368,7 @@ impl Tokenizer {
             c if c.is_ascii_digit() => self.read_number(start, start_line, start_col, c),
 
             // ── Identifiers and keywords ────────────────────────────
-            c if c.is_ascii_alphabetic() || c == '_' => {
+            c if is_identifier_start(c) => {
                 self.read_identifier(start, start_line, start_col, c)
             }
 
@@ -479,7 +503,7 @@ impl Tokenizer {
         value.push(first);
         while self
             .peek()
-            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            .is_some_and(is_identifier_continue)
         {
             value.push(self.advance().unwrap());
         }

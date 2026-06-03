@@ -248,6 +248,10 @@ pub enum TokenType {
     HashArrow,       // #>
     HashDoubleArrow, // #>>
     AtSign,          // @
+    /// `@>` PostgreSQL "contains" (arrays / jsonb / range)
+    AtArrow,
+    /// `<@` PostgreSQL "is contained by"
+    ArrowAt,
     Scope,           // ::
 
     // ── Punctuation ────────────────────────────────────────────────
