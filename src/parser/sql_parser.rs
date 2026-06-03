@@ -403,6 +403,11 @@ impl Parser {
         self.expect(TokenType::Select)?;
 
         let distinct = self.match_token(TokenType::Distinct);
+        // SQL-standard `SELECT ALL` quantifier (§7.12). Equivalent to omitting
+        // the quantifier; consume it so it does not get mis-parsed as a column.
+        if !distinct {
+            let _ = self.match_token(TokenType::All);
+        }
 
         // TOP N (SQL Server style)
         // Use parse_primary() instead of parse_expr() to prevent the parser
@@ -1231,7 +1236,12 @@ impl Parser {
 
         let mut assignments = Vec::new();
         loop {
-            let col = self.expect_name()?;
+            // Accept qualified LHS like `alias.col` (Oracle, T-SQL idiom).
+            let mut col = self.expect_name()?;
+            while self.match_token(TokenType::Dot) {
+                col.push('.');
+                col.push_str(&self.expect_name()?);
+            }
             self.expect(TokenType::Eq)?;
             let val = self.parse_expr()?;
             assignments.push((col, val));
