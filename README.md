@@ -95,13 +95,57 @@ The transpiler applies dialect-specific rewrite rules when converting between di
 | Data type mapping | `TEXT` ↔ `STRING`, `INT` → `BIGINT` (BigQuery) |
 | `BYTEA` ↔ `BLOB` | Postgres `BYTEA` ↔ MySQL `BLOB` |
 
+## Recent Parser Improvements and Benchmark Snapshot
+
+This repository has recently added tolerance and compatibility fixes across
+multiple dialects, including:
+
+- ClickHouse: richer dotted/typed access parsing (`expr.:Type`, `expr.^field`, `.null` field paths), plus broader support for alias-heavy query forms.
+- DuckDB: alias-first projection support (`alias: expr`) and DESCRIBE-in-subquery tolerance.
+- PostgreSQL: `BIT VARYING(n)` cast tolerance, JSON key/value argument parsing (`'k' : v`), richer `ON CONFLICT (...)` target parsing, and broader geometric/operator-sequence tolerance.
+- MySQL: improved UPDATE/DELETE tolerance around ORDER BY, LIMIT, PARTITION, and insert alias edge cases.
+- T-SQL / ANSI extensions: tolerance for `WITH XMLNAMESPACES (...)` and additional parser guardrails for mixed corpora.
+
+Benchmark reference:
+
+- [SQL AST Benchmark](https://sql-ast-benchmark.luca.phd/)
+
+### Acceptance Report (latest run)
+
+| dialect | total | accepted | rejected | accept% | panics |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| postgresql | 29402 | 28089 | 1313 | 95.53% | 0 |
+| sqlite | 12119 | 12103 | 16 | 99.87% | 0 |
+| mysql | 30220 | 29925 | 295 | 99.02% | 0 |
+| clickhouse | 92268 | 91148 | 1120 | 98.79% | 0 |
+| duckdb | 41148 | 40029 | 1119 | 97.28% | 0 |
+| hive | 41294 | 40774 | 520 | 98.74% | 0 |
+| spark_sql | 14464 | 14180 | 284 | 98.04% | 0 |
+| trino | 71 | 70 | 1 | 98.59% | 0 |
+| tsql | 14782 | 13521 | 1261 | 91.47% | 0 |
+| oracle | 21648 | 21608 | 40 | 99.82% | 0 |
+| bigquery | 224 | 222 | 2 | 99.11% | 0 |
+| redshift | 2992 | 2964 | 28 | 99.06% | 0 |
+| multi | 10962 | 9637 | 1325 | 87.91% | 0 |
+| **TOTAL** | **311594** | **304270** | **7324** | **97.65%** | **0** |
+
+### Brief Summary of Not-Yet-Supported Query Kinds
+
+The remaining rejects are concentrated in a few recurring categories:
+
+- Non-SQL or shell-like corpus lines mixed into SQL datasets (for example raw text, script fragments, malformed separators).
+- Dialect-specific meta commands or client commands (for example backslash-style command lines in PostgreSQL corpora).
+- Template or parameterized placeholders that are not concrete SQL syntax until preprocessed.
+- Highly dialect-specific operator families and parser corner-cases in advanced analytical or geometric expressions.
+- Intentionally malformed or truncated statements in test corpora (unterminated strings/comments, unexpected EOF).
+
 ## Quick Start
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlglot-rust = "0.9.37"
+sqlglot-rust = "0.10.0"
 ```
 
 ### Parse and generate SQL
@@ -358,17 +402,19 @@ LD_LIBRARY_PATH=target/release ./example
 src/
 ├── ast/          # AST node definitions (~40 expression types, 15 statement types)
 ├── bin/          # CLI binary (sqlglot) — feature-gated behind "cli"
-├── ffi.rs        # C-compatible FFI bindings (extern "C" API)
-├── tokens/       # Token types (~200+ variants) and tokenizer
-├── parser/       # Recursive-descent SQL parser
-├── generator/    # SQL code generator
+├── builder/      # Expression builder API (fluent SQL construction)
 ├── dialects/     # 30 dialect definitions with transform rules
-├── optimizer/    # Query optimization and scope analysis
-├── planner/      # Logical query planner (execution plan DAG)
-├── executor/     # In-memory SQL execution engine
-├── schema/       # Schema management (MappingSchema, dialect-aware lookups)
+├── diff/         # AST diff / semantic SQL comparison
 ├── errors/       # Error types
-└── lib.rs        # Public API (parse, generate, transpile)
+├── executor/     # In-memory SQL execution engine
+├── ffi.rs        # C-compatible FFI bindings (extern "C" API)
+├── generator/    # SQL code generator
+├── lib.rs        # Public API (parse, generate, transpile)
+├── optimizer/    # Query optimization and scope analysis
+├── parser/       # Recursive-descent SQL parser
+├── planner/      # Logical query planner (execution plan DAG)
+├── schema/       # Schema management (MappingSchema, dialect-aware lookups)
+└── tokens/       # Token types (~200+ variants) and tokenizer
 ```
 
 ## Development

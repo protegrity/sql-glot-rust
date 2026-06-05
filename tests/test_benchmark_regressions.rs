@@ -237,3 +237,85 @@ fn show_as_identifier() {
     parse("SELECT show FROM t", Dialect::DuckDb)
         .expect("`show` must be usable as a column identifier");
 }
+
+// ── Gap 1/3 follow-up — leading `$` in identifiers (aliases, columns) ──
+
+#[test]
+fn dollar_starts_identifier_in_alias() {
+    // Auto-generated SQLite corpora frequently emit aliases like `AS $__`.
+    parse(
+        "SELECT COUNT(purse__) AS $__ FROM table_11622392_1",
+        Dialect::Sqlite,
+    )
+    .expect("`$alias` (`$` start, non-digit tail) must parse as an identifier alias");
+}
+
+#[test]
+fn dollar_starts_identifier_in_column_position() {
+    parse("SELECT $alias FROM t", Dialect::Postgres)
+        .expect("`$alias` (no digits) must tokenize as an identifier, not a parameter");
+}
+
+#[test]
+fn dollar_numeric_still_parameter() {
+    // `$1` keeps the PG parameter-marker semantics intact.
+    parse("SELECT $1 FROM t", Dialect::Postgres)
+        .expect("`$1` must remain a parameter marker");
+}
+
+// ── Aliases with `@` / `:` prefixes ────────────────────────────────────
+
+#[test]
+fn at_prefixed_alias() {
+    parse(
+        "SELECT torque_nm AS @rpm FROM engines",
+        Dialect::Sqlite,
+    )
+    .expect("`AS @name` must parse as an alias");
+}
+
+#[test]
+fn colon_prefixed_alias() {
+    parse(
+        "SELECT total_time_hours AS :minutes FROM logs",
+        Dialect::Sqlite,
+    )
+    .expect("`AS :name` must parse as an alias");
+}
+
+// ── Reserved keywords as column names (CAST/GROUP/ORDER) ──────────────
+
+#[test]
+fn cast_as_column_name() {
+    // `CAST(x AS T)` still parses as a cast — only bare `cast` becomes a name.
+    parse("SELECT cast FROM movies", Dialect::Sqlite)
+        .expect("bare `cast` (no `(`) must be usable as a column identifier");
+    parse("SELECT CAST(x AS INT) FROM t", Dialect::Sqlite)
+        .expect("`CAST(x AS T)` must keep working");
+}
+
+#[test]
+fn group_as_column_name() {
+    parse("SELECT group FROM races", Dialect::Sqlite)
+        .expect("`group` must be usable as a column identifier outside GROUP BY");
+}
+
+#[test]
+fn order_as_column_name() {
+    parse("SELECT episode FROM t WHERE order = 1", Dialect::Sqlite)
+        .expect("`order` must be usable as a column identifier outside ORDER BY");
+}
+
+// ── Unicode symbol characters inside identifiers (continuation) ────────
+
+#[test]
+fn degree_sign_in_identifier_tail() {
+    parse("SELECT n° FROM table_15887683_8", Dialect::Sqlite)
+        .expect("`°` (degree sign) in identifier tail must tokenize");
+}
+
+#[test]
+fn plus_minus_in_identifier_tail() {
+    parse("SELECT temp± FROM readings", Dialect::Sqlite)
+        .expect("`±` in identifier tail must tokenize");
+}
