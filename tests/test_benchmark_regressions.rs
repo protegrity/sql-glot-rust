@@ -259,19 +259,15 @@ fn dollar_starts_identifier_in_column_position() {
 #[test]
 fn dollar_numeric_still_parameter() {
     // `$1` keeps the PG parameter-marker semantics intact.
-    parse("SELECT $1 FROM t", Dialect::Postgres)
-        .expect("`$1` must remain a parameter marker");
+    parse("SELECT $1 FROM t", Dialect::Postgres).expect("`$1` must remain a parameter marker");
 }
 
 // ── Aliases with `@` / `:` prefixes ────────────────────────────────────
 
 #[test]
 fn at_prefixed_alias() {
-    parse(
-        "SELECT torque_nm AS @rpm FROM engines",
-        Dialect::Sqlite,
-    )
-    .expect("`AS @name` must parse as an alias");
+    parse("SELECT torque_nm AS @rpm FROM engines", Dialect::Sqlite)
+        .expect("`AS @name` must parse as an alias");
 }
 
 #[test]

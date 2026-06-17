@@ -596,15 +596,32 @@ impl Parser {
         let is_name_like = matches!(
             next.token_type,
             TokenType::Identifier
-                | TokenType::Year | TokenType::Month | TokenType::Day
-                | TokenType::Hour | TokenType::Minute | TokenType::Second
-                | TokenType::Key | TokenType::Filter | TokenType::First
-                | TokenType::Next | TokenType::Only | TokenType::Schema
-                | TokenType::Database | TokenType::View | TokenType::Collate
-                | TokenType::Comment | TokenType::Replace | TokenType::Text
-                | TokenType::Show | TokenType::Describe | TokenType::Analyze
-                | TokenType::Index | TokenType::Cast | TokenType::Group
-                | TokenType::Order | TokenType::Range
+                | TokenType::Year
+                | TokenType::Month
+                | TokenType::Day
+                | TokenType::Hour
+                | TokenType::Minute
+                | TokenType::Second
+                | TokenType::Key
+                | TokenType::Filter
+                | TokenType::First
+                | TokenType::Next
+                | TokenType::Only
+                | TokenType::Schema
+                | TokenType::Database
+                | TokenType::View
+                | TokenType::Collate
+                | TokenType::Comment
+                | TokenType::Replace
+                | TokenType::Text
+                | TokenType::Show
+                | TokenType::Describe
+                | TokenType::Analyze
+                | TokenType::Index
+                | TokenType::Cast
+                | TokenType::Group
+                | TokenType::Order
+                | TokenType::Range
         );
         if !is_name_like {
             return Ok(None);
@@ -633,9 +650,7 @@ impl Parser {
             return Ok((name, qs));
         }
         // Leading `${...}` template variable as a name (rare).
-        if matches!(self.peek_type(), TokenType::Parameter)
-            && self.peek().value.starts_with("${")
-        {
+        if matches!(self.peek_type(), TokenType::Parameter) && self.peek().value.starts_with("${") {
             let mut name = self.advance().value.clone();
             // Only fuse plain identifiers or further `${...}` segments —
             // never reserved keywords (Order, By, etc.) even though those
@@ -652,9 +667,7 @@ impl Parser {
         // ClickHouse typed placeholder used as an identifier:
         // `{db:Identifier}`, `{tbl:Identifier}`. Accept anywhere a name is
         // expected so `FROM {db:Identifier}.t` and friends parse.
-        if matches!(self.peek_type(), TokenType::Parameter)
-            && self.peek().value.starts_with('{')
-        {
+        if matches!(self.peek_type(), TokenType::Parameter) && self.peek().value.starts_with('{') {
             let name = self.advance().value.clone();
             return Ok((name, QuoteStyle::None));
         }
@@ -728,21 +741,20 @@ impl Parser {
             let after = self.peek_offset(1);
             let is_postfix_modifier = after
                 .map(|t| {
-                    matches!(t.token_type, TokenType::Identifier | TokenType::Cube | TokenType::Rollup)
-                        && matches!(
-                            t.value.to_uppercase().as_str(),
-                            "TOTALS" | "TIES" | "FILL" | "ROLLUP" | "CUBE"
-                        )
+                    matches!(
+                        t.token_type,
+                        TokenType::Identifier | TokenType::Cube | TokenType::Rollup
+                    ) && matches!(
+                        t.value.to_uppercase().as_str(),
+                        "TOTALS" | "TIES" | "FILL" | "ROLLUP" | "CUBE"
+                    )
                 })
                 .unwrap_or(false);
             if is_postfix_modifier {
                 self.advance();
                 self.advance();
                 // Swallow any chained option words up to `;`/EOF/FORMAT/SETTINGS.
-                while !matches!(
-                    self.peek_type(),
-                    TokenType::Semicolon | TokenType::Eof
-                ) {
+                while !matches!(self.peek_type(), TokenType::Semicolon | TokenType::Eof) {
                     if self.is_name_token()
                         && matches!(
                             self.peek().value.to_uppercase().as_str(),
@@ -771,7 +783,10 @@ impl Parser {
         // The `|>` operator chains query stages. We don't model them; swallow
         // the entire chain to end of statement so the leading query stands.
         if self.peek_type() == &TokenType::BitwiseOr
-            && self.peek_offset(1).map(|t| matches!(t.token_type, TokenType::Gt)).unwrap_or(false)
+            && self
+                .peek_offset(1)
+                .map(|t| matches!(t.token_type, TokenType::Gt))
+                .unwrap_or(false)
         {
             while !matches!(self.peek_type(), TokenType::Semicolon | TokenType::Eof) {
                 self.advance();
@@ -854,10 +869,7 @@ impl Parser {
                         // TRUNCATE (PURGE, DROP STORAGE, REUSE STORAGE,
                         // KEEP …, CASCADE, etc.) by swallowing all trailing
                         // tokens up to the statement boundary.
-                        while !matches!(
-                            self.peek_type(),
-                            TokenType::Eof | TokenType::Semicolon
-                        ) {
+                        while !matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon) {
                             self.advance();
                         }
                         Ok(Statement::Truncate(t))
@@ -922,7 +934,9 @@ impl Parser {
                         TokenType::Eof | TokenType::Semicolon => break,
                         TokenType::LParen => depth += 1,
                         TokenType::RParen => {
-                            if depth == 0 { break; }
+                            if depth == 0 {
+                                break;
+                            }
                             depth -= 1;
                         }
                         TokenType::Insert | TokenType::Select if depth == 0 => {
@@ -938,8 +952,7 @@ impl Parser {
                 } else {
                     let saved_from = self.pos;
                     match self.parse_select_body(vec![]) {
-                        Ok(select) => self
-                            .maybe_parse_set_operation(Statement::Select(select)),
+                        Ok(select) => self.maybe_parse_set_operation(Statement::Select(select)),
                         Err(_) => {
                             self.pos = saved_from;
                             self.parse_command_kind("FROM")
@@ -1039,13 +1052,11 @@ impl Parser {
                                     | TokenType::Percent
                                     | TokenType::Percent2
                                     | TokenType::LParen
-                            ) || matches!(
-                                t.token_type,
-                                TokenType::Identifier
-                            ) && matches!(
-                                t.value.to_uppercase().as_str(),
-                                "NOT" | "DEFAULT" | "CONSTANT"
-                            )
+                            ) || matches!(t.token_type, TokenType::Identifier)
+                                && matches!(
+                                    t.value.to_uppercase().as_str(),
+                                    "NOT" | "DEFAULT" | "CONSTANT"
+                                )
                         })
                         .unwrap_or(true) =>
             {
@@ -1079,10 +1090,7 @@ impl Parser {
                 self.advance();
                 if self.is_name_token() {
                     self.advance();
-                    while !matches!(
-                        self.peek_type(),
-                        TokenType::Eof | TokenType::Semicolon
-                    ) {
+                    while !matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon) {
                         self.advance();
                     }
                 } else {
@@ -1135,9 +1143,14 @@ impl Parser {
                     self.advance();
                 } else if !matches!(
                     self.peek_type(),
-                    TokenType::Comma | TokenType::Eof | TokenType::Semicolon
-                        | TokenType::Select | TokenType::Insert
-                        | TokenType::Update | TokenType::Delete | TokenType::Merge
+                    TokenType::Comma
+                        | TokenType::Eof
+                        | TokenType::Semicolon
+                        | TokenType::Select
+                        | TokenType::Insert
+                        | TokenType::Update
+                        | TokenType::Delete
+                        | TokenType::Merge
                 ) {
                     self.advance();
                 }
@@ -1173,10 +1186,8 @@ impl Parser {
                 let _ = self.match_keyword("FIRST");
                 let _ = self.match_token(TokenType::By);
                 // Swallow tokens until SET or end-of-search clause.
-                while !matches!(
-                    self.peek_type(),
-                    TokenType::Eof | TokenType::Semicolon
-                ) && !self.check_keyword("SET")
+                while !matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon)
+                    && !self.check_keyword("SET")
                 {
                     self.advance();
                 }
@@ -1263,19 +1274,44 @@ impl Parser {
                 self.tokens.get(i).map(|t| &t.token_type),
                 Some(TokenType::Identifier)
                     | Some(TokenType::Key)
-                    | Some(TokenType::Year) | Some(TokenType::Month) | Some(TokenType::Day)
-                    | Some(TokenType::Hour) | Some(TokenType::Minute) | Some(TokenType::Second)
-                    | Some(TokenType::Filter) | Some(TokenType::First) | Some(TokenType::Next)
-                    | Some(TokenType::Only) | Some(TokenType::Schema) | Some(TokenType::Database)
-                    | Some(TokenType::View) | Some(TokenType::Collate) | Some(TokenType::Comment)
-                    | Some(TokenType::Replace) | Some(TokenType::Text) | Some(TokenType::Show)
-                    | Some(TokenType::Describe) | Some(TokenType::Analyze) | Some(TokenType::Index)
-                    | Some(TokenType::Cast) | Some(TokenType::Group) | Some(TokenType::Order)
-                    | Some(TokenType::Range) | Some(TokenType::Partition) | Some(TokenType::Rows)
-                    | Some(TokenType::Table) | Some(TokenType::Offset) | Some(TokenType::Temp)
-                    | Some(TokenType::Temporary) | Some(TokenType::Nulls) | Some(TokenType::Conflict)
-                    | Some(TokenType::Unnest) | Some(TokenType::Explain) | Some(TokenType::Merge)
-                    | Some(TokenType::Any) | Some(TokenType::Escape)
+                    | Some(TokenType::Year)
+                    | Some(TokenType::Month)
+                    | Some(TokenType::Day)
+                    | Some(TokenType::Hour)
+                    | Some(TokenType::Minute)
+                    | Some(TokenType::Second)
+                    | Some(TokenType::Filter)
+                    | Some(TokenType::First)
+                    | Some(TokenType::Next)
+                    | Some(TokenType::Only)
+                    | Some(TokenType::Schema)
+                    | Some(TokenType::Database)
+                    | Some(TokenType::View)
+                    | Some(TokenType::Collate)
+                    | Some(TokenType::Comment)
+                    | Some(TokenType::Replace)
+                    | Some(TokenType::Text)
+                    | Some(TokenType::Show)
+                    | Some(TokenType::Describe)
+                    | Some(TokenType::Analyze)
+                    | Some(TokenType::Index)
+                    | Some(TokenType::Cast)
+                    | Some(TokenType::Group)
+                    | Some(TokenType::Order)
+                    | Some(TokenType::Range)
+                    | Some(TokenType::Partition)
+                    | Some(TokenType::Rows)
+                    | Some(TokenType::Table)
+                    | Some(TokenType::Offset)
+                    | Some(TokenType::Temp)
+                    | Some(TokenType::Temporary)
+                    | Some(TokenType::Nulls)
+                    | Some(TokenType::Conflict)
+                    | Some(TokenType::Unnest)
+                    | Some(TokenType::Explain)
+                    | Some(TokenType::Merge)
+                    | Some(TokenType::Any)
+                    | Some(TokenType::Escape)
             );
             if is_name_like {
                 i += 1;
@@ -1294,9 +1330,7 @@ impl Parser {
                     {
                         return true;
                     }
-                    if self.tokens.get(i).map(|t| &t.token_type)
-                        != Some(&TokenType::As)
-                    {
+                    if self.tokens.get(i).map(|t| &t.token_type) != Some(&TokenType::As) {
                         return false;
                     }
                     // Canonical form requires the body after `AS` to be
@@ -1925,6 +1959,12 @@ impl Parser {
                 }
                 if self.match_token(TokenType::Offset) {
                     sop.offset = Some(self.parse_expr()?);
+                    // ANSI SQL:2008 / T-SQL: OFFSET n ROWS. Consume optional ROW(S).
+                    let _ = self.match_token(TokenType::Rows) || self.match_keyword("ROW");
+                }
+                // Accept trailing LIMIT after OFFSET (OFFSET n LIMIT m ordering).
+                if sop.limit.is_none() && self.match_token(TokenType::Limit) {
+                    sop.limit = Some(self.parse_expr()?);
                 }
                 Ok(Statement::SetOperation(sop))
             } else {
@@ -1990,8 +2030,10 @@ impl Parser {
                     || self.check_keyword("IREGEXP")
                     || self.check_keyword("SIMILAR"))
             {
-                let next_is_string =
-                    matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::String));
+                let next_is_string = matches!(
+                    self.peek_offset(1).map(|t| &t.token_type),
+                    Some(TokenType::String)
+                );
                 let is_similar_to = self.check_keyword("SIMILAR")
                     && self
                         .peek_offset(1)
@@ -2108,17 +2150,38 @@ impl Parser {
                     || self.peek_type() == &TokenType::As
                     || matches!(
                         v.as_str(),
-                        "ROW" | "FORMAT" | "SERDE" | "WITH" | "SERDEPROPERTIES"
-                            | "RECORDREADER" | "RECORDWRITER" | "FIELDS" | "TERMINATED"
-                            | "BY" | "COLLECTION" | "ITEMS" | "MAP" | "KEYS"
-                            | "LINES" | "NULL" | "DEFINED" | "STORED" | "DELIMITED"
-                            | "ESCAPED" | "LOCATION" | "OUTPUTFORMAT" | "INPUTFORMAT"
+                        "ROW"
+                            | "FORMAT"
+                            | "SERDE"
+                            | "WITH"
+                            | "SERDEPROPERTIES"
+                            | "RECORDREADER"
+                            | "RECORDWRITER"
+                            | "FIELDS"
+                            | "TERMINATED"
+                            | "BY"
+                            | "COLLECTION"
+                            | "ITEMS"
+                            | "MAP"
+                            | "KEYS"
+                            | "LINES"
+                            | "NULL"
+                            | "DEFINED"
+                            | "STORED"
+                            | "DELIMITED"
+                            | "ESCAPED"
+                            | "LOCATION"
+                            | "OUTPUTFORMAT"
+                            | "INPUTFORMAT"
                     );
                 if !is_tail
                     && !matches!(
                         self.peek_type(),
-                        TokenType::String | TokenType::LParen | TokenType::RParen
-                            | TokenType::Identifier | TokenType::Eq
+                        TokenType::String
+                            | TokenType::LParen
+                            | TokenType::RParen
+                            | TokenType::Identifier
+                            | TokenType::Eq
                     )
                 {
                     break;
@@ -2263,7 +2326,8 @@ impl Parser {
         //   `<tbl> AS OF VERSION <expr>` / `AS OF TIMESTAMP <expr>`.
         // We don't model the time-travel clause in the AST; swallow the
         // keywords and the expression so the surrounding query parses.
-        if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("FOR")
+        if self.is_name_token()
+            && self.peek().value.eq_ignore_ascii_case("FOR")
             && self
                 .peek_offset(1)
                 .map(|t| t.value.eq_ignore_ascii_case("SYSTEM_TIME"))
@@ -2555,8 +2619,13 @@ impl Parser {
             }
             let starts_subquery = matches!(
                 self.peek_type(),
-                TokenType::Select | TokenType::With | TokenType::Explain | TokenType::From
-                    | TokenType::Describe | TokenType::Show | TokenType::Table
+                TokenType::Select
+                    | TokenType::With
+                    | TokenType::Explain
+                    | TokenType::From
+                    | TokenType::Describe
+                    | TokenType::Show
+                    | TokenType::Table
             );
             if starts_subquery {
                 let query = self.parse_statement_inner()?;
@@ -2685,9 +2754,7 @@ impl Parser {
                         let _ = self.parse_joins();
                     }
                     if self.pos != inner_saved && self.match_token(TokenType::RParen) {
-                        let (alias, alias_quote_style) = match self
-                            .parse_optional_alias()?
-                        {
+                        let (alias, alias_quote_style) = match self.parse_optional_alias()? {
                             Some((name, qs)) => (Some(name), qs),
                             None => (None, QuoteStyle::None),
                         };
@@ -2714,7 +2781,10 @@ impl Parser {
         // MySQL / TiDB partition selector: `tbl PARTITION (p0, p1)`. Swallow
         // it so the table reference parses cleanly.
         if matches!(self.peek_type(), TokenType::Partition)
-            && matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::LParen))
+            && matches!(
+                self.peek_offset(1).map(|t| &t.token_type),
+                Some(TokenType::LParen)
+            )
         {
             self.advance();
             self.advance();
@@ -2860,9 +2930,7 @@ impl Parser {
 
         // Also support positional column-list alias on a plain table reference:
         //   FROM tbl t(c1, c2)
-        if self.peek_type() == &TokenType::LParen
-            && table_ref.alias.is_some()
-        {
+        if self.peek_type() == &TokenType::LParen && table_ref.alias.is_some() {
             let saved = self.pos;
             self.advance();
             let mut ok = true;
@@ -2941,7 +3009,10 @@ impl Parser {
         // selector. May appear before or after the alias; we accept it
         // here (i.e., before parse_optional_alias has run).
         if matches!(self.peek_type(), TokenType::Partition)
-            && matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::LParen))
+            && matches!(
+                self.peek_offset(1).map(|t| &t.token_type),
+                Some(TokenType::LParen)
+            )
         {
             self.advance();
             self.advance();
@@ -3300,11 +3371,10 @@ impl Parser {
                     // Wrap as Unnest so we don't reject the syntax.
                     let src = if matches!(self.peek_type(), TokenType::LBracket) {
                         let arr = self.parse_primary()?;
-                        let (alias, alias_quote_style) =
-                            match self.parse_optional_alias()? {
-                                Some((name, qs)) => (Some(name), qs),
-                                None => (None, QuoteStyle::None),
-                            };
+                        let (alias, alias_quote_style) = match self.parse_optional_alias()? {
+                            Some((name, qs)) => (Some(name), qs),
+                            None => (None, QuoteStyle::None),
+                        };
                         TableSource::Unnest {
                             expr: Box::new(arr),
                             alias,
@@ -3450,8 +3520,7 @@ impl Parser {
                         true
                     };
                     // ClickHouse: LEFT ANY|ALL JOIN
-                    let _ = self.match_token(TokenType::Any)
-                        || self.match_token(TokenType::All);
+                    let _ = self.match_token(TokenType::Any) || self.match_token(TokenType::All);
                     // Some dialects (Spark/Hive variants) allow a trailing
                     // OUTER after the strictness modifier.
                     let _ = self.match_token(TokenType::Outer);
@@ -3468,8 +3537,7 @@ impl Parser {
                         self.advance();
                         true
                     };
-                    let _ = self.match_token(TokenType::Any)
-                        || self.match_token(TokenType::All);
+                    let _ = self.match_token(TokenType::Any) || self.match_token(TokenType::All);
                     let _ = self.match_token(TokenType::Outer);
                     self.expect(TokenType::Join)?;
                     JoinType::Right
@@ -3483,9 +3551,7 @@ impl Parser {
                 TokenType::Cross => {
                     self.advance();
                     // T-SQL `CROSS APPLY <source>` ≈ `CROSS JOIN LATERAL ...`.
-                    if self.is_name_token()
-                        && self.peek().value.eq_ignore_ascii_case("APPLY")
-                    {
+                    if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("APPLY") {
                         self.advance();
                         JoinType::Cross
                     } else {
@@ -3496,9 +3562,7 @@ impl Parser {
                 TokenType::Outer => {
                     // T-SQL `OUTER APPLY <source>` ≈ `LEFT JOIN LATERAL ... ON TRUE`.
                     self.advance();
-                    if self.is_name_token()
-                        && self.peek().value.eq_ignore_ascii_case("APPLY")
-                    {
+                    if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("APPLY") {
                         self.advance();
                         JoinType::Left
                     } else {
@@ -3573,10 +3637,7 @@ impl Parser {
                 // looks like the end of the list, rewind.
                 if matches!(
                     self.peek_type(),
-                    TokenType::Comma
-                        | TokenType::Semicolon
-                        | TokenType::Eof
-                        | TokenType::RParen
+                    TokenType::Comma | TokenType::Semicolon | TokenType::Eof | TokenType::RParen
                 ) {
                     self.pos = saved;
                 }
@@ -3952,34 +4013,34 @@ impl Parser {
                 self.pos -= 1;
                 Vec::new()
             } else {
-            // ClickHouse `INSERT INTO t (COLUMNS('.*') EXCEPT (...))` — when
-            // the list contains a function call or anything other than plain
-            // identifiers, fall back to a balanced-paren swallow.
-            let saved = self.pos;
-            let try_simple: Result<Vec<String>> = (|| {
-                let mut cols = vec![self.parse_dotted_name()?];
-                while self.match_token(TokenType::Comma) {
-                    cols.push(self.parse_dotted_name()?);
-                }
-                self.expect(TokenType::RParen)?;
-                Ok(cols)
-            })();
-            match try_simple {
-                Ok(c) => c,
-                Err(_) => {
-                    self.pos = saved;
-                    let mut depth = 1_i32;
-                    while depth > 0 && self.peek_type() != &TokenType::Eof {
-                        match self.peek_type() {
-                            TokenType::LParen => depth += 1,
-                            TokenType::RParen => depth -= 1,
-                            _ => {}
-                        }
-                        self.advance();
+                // ClickHouse `INSERT INTO t (COLUMNS('.*') EXCEPT (...))` — when
+                // the list contains a function call or anything other than plain
+                // identifiers, fall back to a balanced-paren swallow.
+                let saved = self.pos;
+                let try_simple: Result<Vec<String>> = (|| {
+                    let mut cols = vec![self.parse_dotted_name()?];
+                    while self.match_token(TokenType::Comma) {
+                        cols.push(self.parse_dotted_name()?);
                     }
-                    Vec::new()
+                    self.expect(TokenType::RParen)?;
+                    Ok(cols)
+                })();
+                match try_simple {
+                    Ok(c) => c,
+                    Err(_) => {
+                        self.pos = saved;
+                        let mut depth = 1_i32;
+                        while depth > 0 && self.peek_type() != &TokenType::Eof {
+                            match self.peek_type() {
+                                TokenType::LParen => depth += 1,
+                                TokenType::RParen => depth -= 1,
+                                _ => {}
+                            }
+                            self.advance();
+                        }
+                        Vec::new()
+                    }
                 }
-            }
             }
         } else {
             vec![]
@@ -3999,12 +4060,9 @@ impl Parser {
                     break;
                 }
                 // value: number / string / identifier / unary-signed number
-                let _ = self.match_token(TokenType::Minus)
-                    || self.match_token(TokenType::Plus);
-                if matches!(
-                    self.peek_type(),
-                    TokenType::Number | TokenType::String
-                ) || self.is_name_token()
+                let _ = self.match_token(TokenType::Minus) || self.match_token(TokenType::Plus);
+                if matches!(self.peek_type(), TokenType::Number | TokenType::String)
+                    || self.is_name_token()
                 {
                     self.advance();
                 }
@@ -4014,9 +4072,7 @@ impl Parser {
             }
         }
 
-        let source = if self.match_token(TokenType::Values)
-            || self.match_keyword("VALUE")
-        {
+        let source = if self.match_token(TokenType::Values) || self.match_keyword("VALUE") {
             let mut rows = Vec::new();
             loop {
                 self.expect(TokenType::LParen)?;
@@ -4093,11 +4149,7 @@ impl Parser {
                 window_definitions: vec![],
             });
             InsertSource::Query(Box::new(stmt))
-        } else if self
-            .peek()
-            .value
-            .eq_ignore_ascii_case("FORMAT")
-        {
+        } else if self.peek().value.eq_ignore_ascii_case("FORMAT") {
             // ClickHouse `INSERT INTO t FORMAT name <raw payload>`.
             // Swallow the format name and the remainder of the statement
             // as opaque bytes; we cannot parse JSONEachRow / TabSeparated
@@ -4120,12 +4172,23 @@ impl Parser {
         if self.peek_type() == &TokenType::As
             && self
                 .peek_offset(1)
-                .map(|t| matches!(
-                    t.token_type,
-                    TokenType::Identifier | TokenType::Key | TokenType::Year
-                        | TokenType::Month | TokenType::Day | TokenType::Hour
-                        | TokenType::Minute | TokenType::Second
-                ) || t.value.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_'))
+                .map(|t| {
+                    matches!(
+                        t.token_type,
+                        TokenType::Identifier
+                            | TokenType::Key
+                            | TokenType::Year
+                            | TokenType::Month
+                            | TokenType::Day
+                            | TokenType::Hour
+                            | TokenType::Minute
+                            | TokenType::Second
+                    ) || t
+                        .value
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_')
+                })
                 .unwrap_or(false)
         {
             self.advance(); // AS
@@ -4240,14 +4303,25 @@ impl Parser {
         }
         // PG SQL:2011 temporal `UPDATE t FOR PORTION OF col FROM a TO b
         // [AS alias] SET ...`. Swallow the qualifier verbatim.
-        if self.check_keyword("FOR") && self.peek_offset(1).map(|t| t.value.eq_ignore_ascii_case("PORTION")).unwrap_or(false) {
-            while !matches!(self.peek_type(), TokenType::Set | TokenType::Eof | TokenType::Semicolon) {
+        if self.check_keyword("FOR")
+            && self
+                .peek_offset(1)
+                .map(|t| t.value.eq_ignore_ascii_case("PORTION"))
+                .unwrap_or(false)
+        {
+            while !matches!(
+                self.peek_type(),
+                TokenType::Set | TokenType::Eof | TokenType::Semicolon
+            ) {
                 self.advance();
             }
         }
         // MySQL `UPDATE t PARTITION (p0[, p1]) SET ...` — swallow.
         if matches!(self.peek_type(), TokenType::Partition)
-            && matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::LParen))
+            && matches!(
+                self.peek_offset(1).map(|t| &t.token_type),
+                Some(TokenType::LParen)
+            )
         {
             self.advance();
             self.advance();
@@ -4427,7 +4501,10 @@ impl Parser {
         // MySQL: `DELETE FROM t PARTITION (p0[, p1, ...])` — swallow
         // partition selector.
         if matches!(self.peek_type(), TokenType::Partition)
-            && matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::LParen))
+            && matches!(
+                self.peek_offset(1).map(|t| &t.token_type),
+                Some(TokenType::LParen)
+            )
         {
             self.advance();
             self.advance();
@@ -5207,9 +5284,7 @@ impl Parser {
                         self.advance();
                     }
                 }
-            } else if self.is_name_token()
-                && self.peek().value.eq_ignore_ascii_case("GENERATED")
-            {
+            } else if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("GENERATED") {
                 // SQL:2003 / MySQL / PG / SQL Server identity / computed
                 // column: `GENERATED ALWAYS AS (expr) [VIRTUAL|STORED]`,
                 // `GENERATED ALWAYS AS IDENTITY [(...)]`,
@@ -5222,19 +5297,14 @@ impl Parser {
                         || self.peek().value.eq_ignore_ascii_case("BY"))
                 {
                     self.advance();
-                    if self.is_name_token()
-                        && self.peek().value.eq_ignore_ascii_case("DEFAULT")
-                    {
+                    if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("DEFAULT") {
                         self.advance();
                     }
                 }
                 if self.match_token(TokenType::As) {
-                    if self.is_name_token()
-                        && self.peek().value.eq_ignore_ascii_case("IDENTITY")
-                    {
+                    if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("IDENTITY") {
                         self.advance();
-                    } else if self.is_name_token()
-                        && self.peek().value.eq_ignore_ascii_case("ROW")
+                    } else if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("ROW")
                     {
                         // SQL Server `GENERATED AS ROW START | END`.
                         self.advance();
@@ -5519,13 +5589,10 @@ impl Parser {
                                 self.advance();
                                 break;
                             }
-                        } else if matches!(
-                            self.peek_type(),
-                            TokenType::Lt | TokenType::LParen
-                        ) && (self.peek_type() == &TokenType::Lt
-                            && close_tok == TokenType::Gt
-                            || self.peek_type() == &TokenType::LParen
-                                && close_tok == TokenType::RParen)
+                        } else if matches!(self.peek_type(), TokenType::Lt | TokenType::LParen)
+                            && (self.peek_type() == &TokenType::Lt && close_tok == TokenType::Gt
+                                || self.peek_type() == &TokenType::LParen
+                                    && close_tok == TokenType::RParen)
                         {
                             depth += 1;
                         }
@@ -5555,8 +5622,7 @@ impl Parser {
                                 self.advance();
                                 break;
                             }
-                        } else if (self.peek_type() == &TokenType::Lt
-                            && close_tok == TokenType::Gt)
+                        } else if (self.peek_type() == &TokenType::Lt && close_tok == TokenType::Gt)
                             || (self.peek_type() == &TokenType::LParen
                                 && close_tok == TokenType::RParen)
                         {
@@ -5592,8 +5658,7 @@ impl Parser {
                         // Postgres `BIT VARYING(n)` is the same as VARBIT.
                         // Swallow the VARYING keyword if present and parse
                         // the length normally.
-                        if self.is_name_token()
-                            && self.peek().value.eq_ignore_ascii_case("VARYING")
+                        if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("VARYING")
                         {
                             self.advance();
                             let len = self.parse_single_type_param()?;
@@ -5621,10 +5686,7 @@ impl Parser {
                 // `lseg`, `path`, `polygon`, and any vendor-specific type
                 // name that happens to collide with a TokenType variant.
                 let v = token.value.clone();
-                if !v.is_empty()
-                    && v.chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                {
+                if !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                     self.advance();
                     Ok(DataType::Unknown(v.to_uppercase()))
                 } else {
@@ -5728,8 +5790,7 @@ impl Parser {
                 let _ = self.parse_table_ref()?;
             }
             // Trailing CASCADE / RESTRICT.
-            let _ = self.match_token(TokenType::Cascade)
-                || self.match_token(TokenType::Restrict);
+            let _ = self.match_token(TokenType::Cascade) || self.match_token(TokenType::Restrict);
             return Ok(Statement::DropView(DropViewStatement {
                 comments: vec![],
                 name,
@@ -5749,8 +5810,7 @@ impl Parser {
             while self.match_token(TokenType::Comma) {
                 let _ = self.parse_table_ref()?;
             }
-            let _ = self.match_token(TokenType::Cascade)
-                || self.match_token(TokenType::Restrict);
+            let _ = self.match_token(TokenType::Cascade) || self.match_token(TokenType::Restrict);
             return Ok(Statement::DropView(DropViewStatement {
                 comments: vec![],
                 name,
@@ -5927,7 +5987,8 @@ impl Parser {
                         _ => {}
                     }
                     self.advance();
-                    if depth == 0 && matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon)
+                    if depth == 0
+                        && matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon)
                     {
                         break;
                     }
@@ -6185,10 +6246,8 @@ impl Parser {
                     let _ = self.match_token(TokenType::Eq);
                     // Format name can be an identifier (TEXT/JSON/YAML/XML/...)
                     // or a string literal (`'plan_tree'`).
-                    if matches!(
-                        self.peek_type(),
-                        TokenType::String | TokenType::Identifier
-                    ) || self.is_name_token()
+                    if matches!(self.peek_type(), TokenType::String | TokenType::Identifier)
+                        || self.is_name_token()
                     {
                         self.advance();
                     }
@@ -6221,10 +6280,8 @@ impl Parser {
                         self.advance();
                         if self.match_token(TokenType::Eq) {
                             // value: number, string, or identifier
-                            if matches!(
-                                self.peek_type(),
-                                TokenType::Number | TokenType::String
-                            ) || self.is_name_token()
+                            if matches!(self.peek_type(), TokenType::Number | TokenType::String)
+                                || self.is_name_token()
                             {
                                 self.advance();
                             }
@@ -6261,10 +6318,7 @@ impl Parser {
         self.expect(TokenType::Use)?;
         // Optional kind: USE DATABASE / SCHEMA / CATALOG / WAREHOUSE / ROLE
         // (DuckDB / Snowflake / Spark). Swallow the leading keyword.
-        let _ = matches!(
-            self.peek_type(),
-            TokenType::Database | TokenType::Schema
-        ) && {
+        let _ = matches!(self.peek_type(), TokenType::Database | TokenType::Schema) && {
             self.advance();
             true
         } || (self.is_name_token()
@@ -6386,9 +6440,7 @@ impl Parser {
             } else if matches!(next, Some(TokenType::DoubleArrow)) {
                 self.advance();
                 self.advance();
-            } else if matches!(next, Some(TokenType::Eq))
-                && matches!(after, Some(TokenType::Gt))
-            {
+            } else if matches!(next, Some(TokenType::Eq)) && matches!(after, Some(TokenType::Gt)) {
                 // `name => value` tokenized as `Eq Gt` (no DoubleArrow merge).
                 self.advance();
                 self.advance();
@@ -6400,7 +6452,10 @@ impl Parser {
         // `@var := expr`. Tokenized as `Colon Eq`. Lower to `BinaryOp Eq`
         // so the surrounding query parses.
         if matches!(self.peek_type(), TokenType::Colon)
-            && matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::Eq))
+            && matches!(
+                self.peek_offset(1).map(|t| &t.token_type),
+                Some(TokenType::Eq)
+            )
         {
             self.advance();
             self.advance();
@@ -6520,7 +6575,10 @@ impl Parser {
                 let p0 = self.peek_type().clone();
                 let p1 = self.peek_offset(1).map(|t| t.token_type.clone());
                 let p2 = self.peek_offset(2).map(|t| t.token_type.clone());
-                let p1v = self.peek_offset(1).map(|t| t.value.clone()).unwrap_or_default();
+                let p1v = self
+                    .peek_offset(1)
+                    .map(|t| t.value.clone())
+                    .unwrap_or_default();
                 let consume_count = match (&p0, &p1, &p2) {
                     // <-> distance
                     (TokenType::Lt, Some(TokenType::Arrow), _) => 2,
@@ -6570,7 +6628,10 @@ impl Parser {
                 TokenType::Gt => Some(BinaryOperator::Gt),
                 TokenType::LtEq => {
                     // Hive / MySQL `<=>` null-safe equality tokenizes as `Lte Gt`.
-                    if matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::Gt)) {
+                    if matches!(
+                        self.peek_offset(1).map(|t| &t.token_type),
+                        Some(TokenType::Gt)
+                    ) {
                         self.advance();
                         self.advance();
                         let right = self.parse_addition()?;
@@ -6698,10 +6759,7 @@ impl Parser {
                         right: Box::new(right),
                     };
                 } else if matches!(self.peek_type(), TokenType::Json | TokenType::Jsonb)
-                    || self
-                        .peek()
-                        .value
-                        .eq_ignore_ascii_case("DOCUMENT")
+                    || self.peek().value.eq_ignore_ascii_case("DOCUMENT")
                     || self.peek().value.eq_ignore_ascii_case("UNKNOWN")
                 {
                     // PG / Db2 / SQL:2016 `expr IS [NOT] JSON [VALUE|ARRAY|
@@ -6952,7 +7010,10 @@ impl Parser {
                 }
                 TokenType::BitwiseXor => {
                     // Preserve PostgreSQL `^@` for comparison-level handling.
-                    if matches!(self.peek_offset(1).map(|t| &t.token_type), Some(TokenType::AtSign)) {
+                    if matches!(
+                        self.peek_offset(1).map(|t| &t.token_type),
+                        Some(TokenType::AtSign)
+                    ) {
                         None
                     } else {
                         Some(BinaryOperator::BitwiseXor)
@@ -7046,9 +7107,7 @@ impl Parser {
                     // the comparison-level handler.
                     if matches!(
                         self.peek_offset(1).map(|t| &t.token_type),
-                        Some(TokenType::BitwiseAnd)
-                            | Some(TokenType::Lt)
-                            | Some(TokenType::Gt)
+                        Some(TokenType::BitwiseAnd) | Some(TokenType::Lt) | Some(TokenType::Gt)
                     ) {
                         None
                     } else {
@@ -7192,7 +7251,10 @@ impl Parser {
                     .unwrap_or(false)
                 && matches!(
                     expr,
-                    Expr::Column { .. } | Expr::JsonAccess { .. } | Expr::Cast { .. } | Expr::ArrayIndex { .. }
+                    Expr::Column { .. }
+                        | Expr::JsonAccess { .. }
+                        | Expr::Cast { .. }
+                        | Expr::ArrayIndex { .. }
                 )
             {
                 // Snowflake VARIANT path accessor: `col:key`, `col:a:b`,
@@ -7214,8 +7276,14 @@ impl Parser {
                     self.advance();
                 }
             } else if self.check_keyword("AT")
-                && self.peek_offset(1).map(|t| t.value.eq_ignore_ascii_case("TIME")).unwrap_or(false)
-                && self.peek_offset(2).map(|t| t.value.eq_ignore_ascii_case("ZONE")).unwrap_or(false)
+                && self
+                    .peek_offset(1)
+                    .map(|t| t.value.eq_ignore_ascii_case("TIME"))
+                    .unwrap_or(false)
+                && self
+                    .peek_offset(2)
+                    .map(|t| t.value.eq_ignore_ascii_case("ZONE"))
+                    .unwrap_or(false)
             {
                 // PostgreSQL / DuckDB: `expr AT TIME ZONE 'tz'`. Swallow the
                 // suffix; the timezone-shifted value attaches to `expr`.
@@ -7240,7 +7308,8 @@ impl Parser {
                 self.advance(); // .
                 let _ = self.match_token(TokenType::BitwiseXor);
                 let _ = self.match_token(TokenType::Colon);
-                if self.is_name_token() || self.is_data_type_token()
+                if self.is_name_token()
+                    || self.is_data_type_token()
                     || matches!(self.peek_type(), TokenType::Null | TokenType::Identifier)
                 {
                     let part = self.advance().clone();
@@ -7551,9 +7620,7 @@ impl Parser {
         let order_by = if self.match_token(TokenType::Order) {
             self.expect(TokenType::By)?;
             self.parse_order_by_items()?
-        } else if self.is_name_token()
-            && self.peek().value.eq_ignore_ascii_case("SORT")
-        {
+        } else if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("SORT") {
             // Hive `SORT BY` inside OVER(...) — treat as ORDER BY.
             self.advance();
             self.expect(TokenType::By)?;
@@ -7844,7 +7911,9 @@ impl Parser {
             // ClickHouse / various: `values` used as a column name inside
             // expressions (e.g. `arrayExists(x -> x > 5, values)`). Accept
             // it as a bare column reference when it isn't followed by `(`.
-            TokenType::Values if self.peek_offset(1).map(|t| &t.token_type) != Some(&TokenType::LParen) => {
+            TokenType::Values
+                if self.peek_offset(1).map(|t| &t.token_type) != Some(&TokenType::LParen) =>
+            {
                 self.advance();
                 Ok(Expr::Column {
                     table: None,
@@ -7975,7 +8044,11 @@ impl Parser {
             }
 
             // ── CAST ────────────────────────────────────────────────
-            TokenType::Cast if self.peek_offset(1).is_some_and(|t| t.token_type == TokenType::LParen) => {
+            TokenType::Cast
+                if self
+                    .peek_offset(1)
+                    .is_some_and(|t| t.token_type == TokenType::LParen) =>
+            {
                 self.advance();
                 self.expect(TokenType::LParen)?;
                 let expr = self.parse_expr()?;
@@ -8179,7 +8252,12 @@ impl Parser {
             // ── DuckDB MAP literal: `MAP { 'k': v, ... }` ──────────
             // Captured as a `MAP(...)` function call with the values as
             // positional arguments; keys are discarded for now.
-            TokenType::Map if self.peek_offset(1).map(|t| matches!(t.token_type, TokenType::LBrace)).unwrap_or(false) => {
+            TokenType::Map
+                if self
+                    .peek_offset(1)
+                    .map(|t| matches!(t.token_type, TokenType::LBrace))
+                    .unwrap_or(false) =>
+            {
                 self.advance(); // MAP
                 self.advance(); // {
                 let mut args = Vec::new();
@@ -8480,10 +8558,7 @@ impl Parser {
                     // as `CAST(expr AS type)`. Lower to `Expr::Cast` when the
                     // body matches; fall back to ordinary function call when
                     // it does not (e.g. comma-separated args).
-                    if matches!(
-                        name.to_ascii_uppercase().as_str(),
-                        "TRY_CAST" | "SAFE_CAST"
-                    ) {
+                    if matches!(name.to_ascii_uppercase().as_str(), "TRY_CAST" | "SAFE_CAST") {
                         let save = self.pos;
                         let inner = self.parse_expr()?;
                         if self.match_token(TokenType::As) {
@@ -8708,7 +8783,11 @@ impl Parser {
                         within_group = true;
                     }
 
-                    let final_order_by = if within_group { wg_order_by } else { agg_order_by };
+                    let final_order_by = if within_group {
+                        wg_order_by
+                    } else {
+                        agg_order_by
+                    };
 
                     // Try to construct a typed function variant only when there are no
                     // aggregate-specific clauses (otherwise we lose them).
@@ -8739,10 +8818,8 @@ impl Parser {
                         // first dot: `json.^a`, `json.:Int64`.
                         let _ = self.match_token(TokenType::BitwiseXor);
                         let _ = self.match_token(TokenType::Colon);
-                        let (mut col, mut col_qs) = if matches!(
-                            self.peek_type(),
-                            TokenType::Number
-                        ) {
+                        let (mut col, mut col_qs) = if matches!(self.peek_type(), TokenType::Number)
+                        {
                             // ClickHouse tuple index `x.1`.
                             let v = self.peek().value.clone();
                             self.advance();
@@ -8777,20 +8854,18 @@ impl Parser {
                             let _ = self.match_token(TokenType::Colon);
                             // ClickHouse tuple index (`t.1`): treat number as
                             // a synthetic field name.
-                            let (next_col, next_qs) = if matches!(
-                                self.peek_type(),
-                                TokenType::Number
-                            ) {
-                                let v = self.peek().value.clone();
-                                self.advance();
-                                (v, QuoteStyle::None)
-                            } else if matches!(self.peek_type(), TokenType::Null) {
-                                let v = self.peek().value.clone();
-                                self.advance();
-                                (v, QuoteStyle::None)
-                            } else {
-                                self.expect_name_with_quote()?
-                            };
+                            let (next_col, next_qs) =
+                                if matches!(self.peek_type(), TokenType::Number) {
+                                    let v = self.peek().value.clone();
+                                    self.advance();
+                                    (v, QuoteStyle::None)
+                                } else if matches!(self.peek_type(), TokenType::Null) {
+                                    let v = self.peek().value.clone();
+                                    self.advance();
+                                    (v, QuoteStyle::None)
+                                } else {
+                                    self.expect_name_with_quote()?
+                                };
                             table.push('.');
                             table.push_str(&col);
                             table_qs = col_qs;
@@ -8847,9 +8922,8 @@ impl Parser {
                 // built-ins (IF, ALL, ANY, EXISTS, MOD, etc.) and dialect
                 // functions that happen to collide with token types.
                 let v = token.value.clone();
-                let is_word = !v.is_empty()
-                    && v.chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_');
+                let is_word =
+                    !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
                 if is_word
                     && matches!(
                         self.peek_offset(1).map(|t| &t.token_type),
@@ -8861,10 +8935,7 @@ impl Parser {
                     // (or back to a function call when the form doesn't
                     // match).
                     let upper = v.to_ascii_uppercase();
-                    if matches!(
-                        upper.as_str(),
-                        "TRY_CAST" | "SAFE_CAST"
-                    ) {
+                    if matches!(upper.as_str(), "TRY_CAST" | "SAFE_CAST") {
                         self.advance();
                         self.advance(); // consume '('
                         let inner = self.parse_expr()?;
@@ -9087,7 +9158,10 @@ impl Parser {
             }
             return Ok(Expr::Null);
         }
-        if self.is_name_token() || self.is_data_type_token() || matches!(self.peek_type(), TokenType::Recursive) {
+        if self.is_name_token()
+            || self.is_data_type_token()
+            || matches!(self.peek_type(), TokenType::Recursive)
+        {
             let next = self.peek_offset(1).map(|t| &t.token_type);
             if matches!(next, Some(TokenType::Colon)) {
                 let after = self.peek_offset(2).map(|t| &t.token_type);
@@ -9129,7 +9203,10 @@ impl Parser {
             expr = self.parse_expr()?;
             // Optional `FORMAT JSON` suffix (Oracle).
             if self.peek().value.eq_ignore_ascii_case("FORMAT")
-                && self.peek_offset(1).map(|t| t.value.eq_ignore_ascii_case("JSON")).unwrap_or(false)
+                && self
+                    .peek_offset(1)
+                    .map(|t| t.value.eq_ignore_ascii_case("JSON"))
+                    .unwrap_or(false)
             {
                 self.advance();
                 self.advance();
@@ -9232,8 +9309,10 @@ impl Parser {
             if self.peek_type() == &TokenType::On
                 && self
                     .peek_offset(1)
-                    .map(|t| t.value.eq_ignore_ascii_case("ERROR")
-                        || t.value.eq_ignore_ascii_case("EMPTY"))
+                    .map(|t| {
+                        t.value.eq_ignore_ascii_case("ERROR")
+                            || t.value.eq_ignore_ascii_case("EMPTY")
+                    })
                     .unwrap_or(false)
             {
                 self.advance(); // ON
@@ -9376,9 +9455,7 @@ impl Parser {
                     "DAY_HOUR" | "DAY_MINUTE" | "DAY_SECOND" | "DAY_MICROSECOND" => {
                         DateTimeField::Day
                     }
-                    "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND" => {
-                        DateTimeField::Hour
-                    }
+                    "HOUR_MINUTE" | "HOUR_SECOND" | "HOUR_MICROSECOND" => DateTimeField::Hour,
                     "MINUTE_SECOND" | "MINUTE_MICROSECOND" => DateTimeField::Minute,
                     "SECOND_MICROSECOND" => DateTimeField::Second,
                     "YEAR_MONTH" => DateTimeField::Year,
