@@ -231,7 +231,10 @@ impl Tokenizer {
                         if c == ' ' || c == '\t' {
                             has_space_inside = true;
                         }
-                        if matches!(c, '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '&' | '|' | '^') {
+                        if matches!(
+                            c,
+                            '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '&' | '|' | '^'
+                        ) {
                             has_operator_inside = true;
                         }
                         scan += 1;
@@ -247,8 +250,8 @@ impl Tokenizer {
                             // it's a string literal cast (`array['lit'::T]`),
                             // not a bracket identifier. For non-subscriptable
                             // contexts (TSQL `[user's name]`), accept quotes.
-                            looks_like_ident = scan > self.pos
-                                && (!prev_is_subscriptable || !saw_quote);
+                            looks_like_ident =
+                                scan > self.pos && (!prev_is_subscriptable || !saw_quote);
                             break;
                         }
                         // `,` rules out `ARRAY[1,2,3]` style literals.
@@ -274,15 +277,9 @@ impl Tokenizer {
                 // parens (e.g. `{ids:Array(UInt64)}`). Scan until the
                 // matching `}` and emit a single Parameter token; fall back
                 // to a plain `LBrace` otherwise.
-                if self
-                    .peek()
-                    .is_some_and(is_identifier_start)
-                {
+                if self.peek().is_some_and(is_identifier_start) {
                     let mut i = 1usize;
-                    while self
-                        .peek_at(i)
-                        .is_some_and(|c| is_identifier_continue(c))
-                    {
+                    while self.peek_at(i).is_some_and(|c| is_identifier_continue(c)) {
                         i += 1;
                     }
                     if self.peek_at(i) == Some(':') {
@@ -440,9 +437,11 @@ impl Tokenizer {
                     Ok(self.make_token(TokenType::Neq, "<>", start, start_line, start_col))
                 } else if self.peek() == Some('<') {
                     self.advance();
-                    Ok(self.make_token(TokenType::ShiftLeft, "<<", start, start_line, start_col))                } else if self.peek() == Some('@') {
+                    Ok(self.make_token(TokenType::ShiftLeft, "<<", start, start_line, start_col))
+                } else if self.peek() == Some('@') {
                     self.advance();
-                    Ok(self.make_token(TokenType::ArrowAt, "<@", start, start_line, start_col))                } else {
+                    Ok(self.make_token(TokenType::ArrowAt, "<@", start, start_line, start_col))
+                } else {
                     Ok(self.make_token(TokenType::Lt, "<", start, start_line, start_col))
                 }
             }
@@ -567,13 +566,7 @@ impl Tokenizer {
                     while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                         value.push(self.advance().unwrap());
                     }
-                    Ok(self.make_token(
-                        TokenType::Parameter,
-                        value,
-                        start,
-                        start_line,
-                        start_col,
-                    ))
+                    Ok(self.make_token(TokenType::Parameter, value, start, start_line, start_col))
                 } else {
                     let mut value = String::from("#");
                     while self.peek().is_some_and(|c| c != '\n') {
@@ -598,9 +591,7 @@ impl Tokenizer {
             c if c.is_ascii_digit() => self.read_number(start, start_line, start_col, c),
 
             // ── Identifiers and keywords ────────────────────────────
-            c if is_identifier_start(c) => {
-                self.read_identifier(start, start_line, start_col, c)
-            }
+            c if is_identifier_start(c) => self.read_identifier(start, start_line, start_col, c),
 
             // ── Quoted identifiers (double quote) ───────────────────
             '"' => self.read_quoted_identifier(start, start_line, start_col, '"'),
@@ -856,10 +847,7 @@ impl Tokenizer {
             return Ok(self.make_token(TokenType::HexString, value, start, start_line, start_col));
         }
 
-        while self
-            .peek()
-            .is_some_and(|c| c.is_ascii_digit() || c == '_')
-        {
+        while self.peek().is_some_and(|c| c.is_ascii_digit() || c == '_') {
             value.push(self.advance().unwrap());
         }
 
@@ -868,10 +856,7 @@ impl Tokenizer {
                 || !self.peek_at(1).is_some_and(is_identifier_start))
         {
             value.push(self.advance().unwrap());
-            while self
-                .peek()
-                .is_some_and(|c| c.is_ascii_digit() || c == '_')
-            {
+            while self.peek().is_some_and(|c| c.is_ascii_digit() || c == '_') {
                 value.push(self.advance().unwrap());
             }
         }
@@ -914,10 +899,7 @@ impl Tokenizer {
     ) -> Result<Token> {
         let mut value = String::new();
         value.push(first);
-        while self
-            .peek()
-            .is_some_and(is_identifier_continue)
-        {
+        while self.peek().is_some_and(is_identifier_continue) {
             // Don't swallow a `$` that starts a template variable
             // (`${name}`) or a numbered parameter (`$1`) — those need to
             // tokenize as their own Parameter token.

@@ -1588,6 +1588,84 @@ fn test_pg_to_oracle_limit_offset_no_order_by() {
     );
 }
 
+// CR-013: OFFSET-before-LIMIT must not drop the LIMIT clause.
+
+#[test]
+fn cr013_offset_before_limit_select_identity() {
+    // SELECT body: both orderings must produce the same output.
+    let a = transpile_ok(
+        "SELECT * FROM t ORDER BY a OFFSET 2 LIMIT 5",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    let b = transpile_ok(
+        "SELECT * FROM t ORDER BY a LIMIT 5 OFFSET 2",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    assert_eq!(a, b, "OFFSET-first vs LIMIT-first must be equivalent");
+    assert!(a.to_uppercase().contains("LIMIT 5"), "LIMIT lost: {a}");
+    assert!(a.to_uppercase().contains("OFFSET 2"), "OFFSET lost: {a}");
+}
+
+#[test]
+fn cr013_offset_before_limit_pg_to_oracle() {
+    assert_transpile(
+        "SELECT id FROM users ORDER BY id OFFSET 5 LIMIT 20",
+        "SELECT id FROM users ORDER BY id OFFSET 5 ROWS FETCH FIRST 20 ROWS ONLY",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr013_offset_before_limit_pg_to_tsql() {
+    assert_transpile(
+        "SELECT * FROM t ORDER BY a OFFSET 5 LIMIT 10",
+        "SELECT * FROM t ORDER BY a OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr013_set_op_offset_before_limit() {
+    // Parenthesized UNION forces the set-operation tail path.
+    let out = transpile_ok(
+        "(SELECT a FROM t) UNION (SELECT a FROM u) ORDER BY a OFFSET 2 LIMIT 5",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    assert!(
+        out.to_uppercase().contains("LIMIT 5"),
+        "LIMIT lost in set-op: {out}"
+    );
+    assert!(
+        out.to_uppercase().contains("OFFSET 2"),
+        "OFFSET lost in set-op: {out}"
+    );
+}
+
+#[test]
+fn cr013_set_op_offset_before_limit_to_oracle() {
+    // Set-operation dialect transforms (LIMIT→FETCH FIRST) are not yet
+    // applied to SetOperation nodes — only the parser ordering fix is
+    // validated here. The LIMIT survives as LIMIT in the output.
+    let out = transpile_ok(
+        "(SELECT a FROM t) UNION (SELECT a FROM u) ORDER BY a OFFSET 2 LIMIT 5",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    assert!(
+        out.to_uppercase().contains("LIMIT 5") || out.to_uppercase().contains("FETCH FIRST 5"),
+        "LIMIT/FETCH must be present: {out}"
+    );
+    assert!(
+        out.to_uppercase().contains("OFFSET 2"),
+        "OFFSET must be present: {out}"
+    );
+}
+
 // ── PostgreSQL (from test_postgres.py) ──
 
 #[test]

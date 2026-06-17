@@ -252,7 +252,7 @@ pub enum TokenType {
     AtArrow,
     /// `<@` PostgreSQL "is contained by"
     ArrowAt,
-    Scope,           // ::
+    Scope, // ::
 
     // ── Punctuation ────────────────────────────────────────────────
     LParen,
