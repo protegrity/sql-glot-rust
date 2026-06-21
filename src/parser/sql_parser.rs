@@ -496,21 +496,6 @@ impl Parser {
         self.tokens.get(self.pos + offset)
     }
 
-    /// Look ahead past a run of `(` tokens to see if a `SELECT`, `WITH`, or
-    /// `EXPLAIN` keyword starts inside. Used by the subquery parser to detect
-    /// `((SELECT …))` and similar shapes.
-    fn peek_starts_subquery_through_parens(&self) -> bool {
-        let mut i = self.pos;
-        while i < self.tokens.len() && self.tokens[i].token_type == TokenType::LParen {
-            i += 1;
-        }
-        i < self.tokens.len()
-            && matches!(
-                self.tokens[i].token_type,
-                TokenType::Select | TokenType::With | TokenType::Explain | TokenType::From
-            )
-    }
-
     /// Helper to check if current token is an identifier or keyword that can serve as a name.
     fn is_name_token(&self) -> bool {
         matches!(
@@ -2607,17 +2592,16 @@ impl Parser {
         if self.peek_type() == &TokenType::LParen {
             let saved = self.pos;
             self.advance();
-            // Skip nested `(` so `((SELECT …))` and `((SELECT) UNION (SELECT))`
-            // parse as a subquery. We count how many we consumed and pair
-            // them with the matching trailing `)`s.
-            let mut extra_parens = 0_usize;
-            while self.peek_type() == &TokenType::LParen
-                && self.peek_starts_subquery_through_parens()
-            {
-                self.advance();
-                extra_parens += 1;
-            }
-            let starts_subquery = matches!(
+            // A derived-table body is a subquery when it begins with a statement
+            // keyword, or with another `(` when the body is itself a
+            // parenthesised (possibly set-operation) query — e.g. redundant
+            // nesting `((SELECT …))` or a set operation whose branches are each
+            // parenthesised `((SELECT …) EXCEPT (SELECT …))`. Delegate to the
+            // recursive statement parser (the same path the top-level set-op
+            // parser uses) rather than hand-counting parens, which cannot tell
+            // redundant wrapping apart from a parenthesised first branch
+            // (CR-014).
+            let direct_subquery = matches!(
                 self.peek_type(),
                 TokenType::Select
                     | TokenType::With
@@ -2627,15 +2611,32 @@ impl Parser {
                     | TokenType::Show
                     | TokenType::Table
             );
-            if starts_subquery {
+            // A `(`-led body may instead be a parenthesised join / table list
+            // (`((t1 JOIN t2)) alias`). Attempt the subquery interpretation and,
+            // on failure, restore to `saved` so the parenthesised-join handling
+            // further below still runs.
+            let paren_body = self.peek_type() == &TokenType::LParen;
+            let mut subquery: Option<Statement> = None;
+            if direct_subquery {
                 let query = self.parse_statement_inner()?;
                 // Set operations across parenthesised subqueries: `(SELECT …)
                 // UNION ALL (SELECT …) [ORDER BY …] [LIMIT …]`.
                 let query = self.maybe_parse_set_operation(query)?;
-                for _ in 0..extra_parens {
-                    self.expect(TokenType::RParen)?;
-                }
                 self.expect(TokenType::RParen)?;
+                subquery = Some(query);
+            } else if paren_body {
+                let attempt = self
+                    .parse_statement_inner()
+                    .and_then(|q| self.maybe_parse_set_operation(q));
+                match attempt {
+                    Ok(query) if self.peek_type() == &TokenType::RParen => {
+                        self.advance();
+                        subquery = Some(query);
+                    }
+                    _ => self.pos = saved,
+                }
+            }
+            if let Some(query) = subquery {
                 let (alias, alias_quote_style) = match self.parse_optional_alias()? {
                     Some((name, qs)) => (Some(name), qs),
                     None => (None, QuoteStyle::None),
@@ -10365,6 +10366,58 @@ mod tests {
                 }
             }
             _ => panic!("Expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn cr014_paren_setop_derived_table_parses() {
+        // CR-014: a parenthesised set operation used as a derived table, where
+        // each branch is itself parenthesised, must parse. Previously failed
+        // with `Expected RParen, got Except/Union/Intersect`.
+        for op in ["EXCEPT", "UNION", "UNION ALL", "INTERSECT"] {
+            let sql = format!("SELECT count(*) FROM ((SELECT 1) {op} (SELECT 2)) x");
+            assert!(
+                Parser::new(&sql).unwrap().parse_statements().is_ok(),
+                "must parse: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn cr014_chained_except_derived_table_parses() {
+        // TPC-DS q87 shape: chained EXCEPT of parenthesised branches.
+        let sql = "SELECT count(*) FROM ((SELECT 1 AS a) EXCEPT (SELECT 2 AS a) \
+                   EXCEPT (SELECT 3 AS a)) cool_cust";
+        let stmt = Parser::new(sql).unwrap().parse_statement().unwrap();
+        match stmt {
+            Statement::Select(sel) => {
+                let from = sel.from.expect("FROM clause present");
+                match from.source {
+                    TableSource::Subquery { query, alias, .. } => {
+                        assert_eq!(alias.as_deref(), Some("cool_cust"));
+                        assert!(matches!(*query, Statement::SetOperation(_)));
+                    }
+                    _ => panic!("Expected subquery derived table"),
+                }
+            }
+            _ => panic!("Expected SELECT"),
+        }
+    }
+
+    #[test]
+    fn cr014_controls_still_parse() {
+        // Redundant nesting and no-branch-parens set-op were already OK; keep
+        // them green. The parenthesised-join derived table must also still
+        // parse (no regression from removing the paren-counting heuristic).
+        for sql in [
+            "SELECT count(*) FROM ((SELECT 1)) x",
+            "SELECT count(*) FROM (SELECT 1 EXCEPT SELECT 2) x",
+            "SELECT * FROM (a JOIN b ON a.id = b.id) x",
+        ] {
+            assert!(
+                Parser::new(sql).unwrap().parse_statements().is_ok(),
+                "must parse: {sql}"
+            );
         }
     }
 

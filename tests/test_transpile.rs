@@ -2458,3 +2458,64 @@ fn test_pg_to_tsql_array_errors() {
         err
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-014: Parenthesised set operation as a derived table
+// `FROM ((SELECT …) EXCEPT|UNION|INTERSECT (SELECT …)) alias`
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cr014_parse_paren_setop_derived_table() {
+    // Each set-op branch is individually parenthesised — must parse.
+    for op in ["EXCEPT", "UNION", "UNION ALL", "INTERSECT"] {
+        let sql = format!("SELECT count(*) FROM ((SELECT 1) {op} (SELECT 2)) x");
+        assert!(
+            parse(&sql, Dialect::Postgres).is_ok(),
+            "must parse: {sql}"
+        );
+    }
+}
+
+#[test]
+fn cr014_parse_chained_except_derived_table() {
+    // TPC-DS q87 shape: chained EXCEPT of parenthesised branches.
+    let sql = "SELECT count(*) FROM ((SELECT 1 AS a) EXCEPT (SELECT 2 AS a) \
+               EXCEPT (SELECT 3 AS a)) cool_cust";
+    assert!(
+        parse(sql, Dialect::Postgres).is_ok(),
+        "chained EXCEPT must parse"
+    );
+}
+
+#[test]
+fn cr014_controls_still_parse() {
+    // Redundant nesting and no-branch-parens set-op were already OK.
+    assert!(parse("SELECT count(*) FROM ((SELECT 1)) x", Dialect::Postgres).is_ok());
+    assert!(parse("SELECT count(*) FROM (SELECT 1 EXCEPT SELECT 2) x", Dialect::Postgres).is_ok());
+}
+
+#[test]
+fn cr014_transpile_paren_setop_pg_to_tsql() {
+    let out = transpile(
+        "SELECT count(*) FROM ((SELECT 1) EXCEPT (SELECT 2)) x",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    )
+    .unwrap();
+    let u = out.to_uppercase();
+    assert!(u.contains("EXCEPT"), "set op preserved: {out}");
+    assert!(u.contains(" X") || u.ends_with('X'), "alias preserved: {out}");
+}
+
+#[test]
+fn cr014_transpile_paren_setop_pg_identity() {
+    // PG → PG round-trip must succeed (no parser error) for all four operators.
+    for op in ["EXCEPT", "UNION", "UNION ALL", "INTERSECT"] {
+        let sql = format!("SELECT count(*) FROM ((SELECT 1) {op} (SELECT 2)) x");
+        assert!(
+            transpile(&sql, Dialect::Postgres, Dialect::Postgres).is_ok(),
+            "{sql}"
+        );
+    }
+}
+
