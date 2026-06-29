@@ -519,7 +519,9 @@ fn is_typed_aggregate(func: &TypedFunction) -> bool {
             | TypedFunction::Max { .. }
             | TypedFunction::ArrayAgg { .. }
             | TypedFunction::Variance { .. }
+            | TypedFunction::VariancePop { .. }
             | TypedFunction::Stddev { .. }
+            | TypedFunction::StddevPop { .. }
             | TypedFunction::GroupConcat { .. }
     )
 }

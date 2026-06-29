@@ -748,7 +748,9 @@ fn typed_function_is_aggregate(func: &TypedFunction) -> bool {
             | TypedFunction::ArrayAgg { .. }
             | TypedFunction::ApproxDistinct { .. }
             | TypedFunction::Variance { .. }
+            | TypedFunction::VariancePop { .. }
             | TypedFunction::Stddev { .. }
+            | TypedFunction::StddevPop { .. }
             | TypedFunction::GroupConcat { .. }
     )
 }

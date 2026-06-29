@@ -764,10 +764,14 @@ pub enum TypedFunction {
     ArrayAgg { expr: Box<Expr>, distinct: bool },
     /// `APPROX_DISTINCT(expr)` / `APPROX_COUNT_DISTINCT`
     ApproxDistinct { expr: Box<Expr> },
-    /// `VARIANCE(expr)` / `VAR_SAMP`
+    /// `VARIANCE(expr)` / `VAR_SAMP` (sample variance)
     Variance { expr: Box<Expr> },
-    /// `STDDEV(expr)` / `STDDEV_SAMP`
+    /// `VAR_POP(expr)` (population variance)
+    VariancePop { expr: Box<Expr> },
+    /// `STDDEV(expr)` / `STDDEV_SAMP` (sample standard deviation)
     Stddev { expr: Box<Expr> },
+    /// `STDDEV_POP(expr)` (population standard deviation)
+    StddevPop { expr: Box<Expr> },
     /// `GROUP_CONCAT([DISTINCT] expr [, ...] [ORDER BY ...] [SEPARATOR sep])` (MySQL)
     /// / `STRING_AGG(expr, sep [ORDER BY ...])` (Postgres/BigQuery/TSQL)
     /// / `LISTAGG(expr, sep [WITHIN GROUP (ORDER BY ...)])` (Oracle/Redshift/Snowflake)
@@ -1018,7 +1022,9 @@ impl TypedFunction {
             | TypedFunction::ArrayAgg { expr, .. }
             | TypedFunction::ApproxDistinct { expr }
             | TypedFunction::Variance { expr }
-            | TypedFunction::Stddev { expr } => expr.walk(visitor),
+            | TypedFunction::VariancePop { expr }
+            | TypedFunction::Stddev { expr }
+            | TypedFunction::StddevPop { expr } => expr.walk(visitor),
             TypedFunction::GroupConcat {
                 exprs,
                 separator,
@@ -1319,7 +1325,13 @@ impl TypedFunction {
             TypedFunction::Variance { expr } => TypedFunction::Variance {
                 expr: Box::new(expr.transform(func)),
             },
+            TypedFunction::VariancePop { expr } => TypedFunction::VariancePop {
+                expr: Box::new(expr.transform(func)),
+            },
             TypedFunction::Stddev { expr } => TypedFunction::Stddev {
+                expr: Box::new(expr.transform(func)),
+            },
+            TypedFunction::StddevPop { expr } => TypedFunction::StddevPop {
                 expr: Box::new(expr.transform(func)),
             },
             TypedFunction::GroupConcat {

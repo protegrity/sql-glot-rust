@@ -2939,8 +2939,29 @@ impl Generator {
                 self.gen_expr(expr);
                 self.write(")");
             }
+            TypedFunction::VariancePop { expr } => {
+                // Population variance: PG VAR_POP -> T-SQL VARP.
+                let name = if is_tsql { "VARP" } else { "VAR_POP" };
+                self.write_keyword(name);
+                self.write("(");
+                self.gen_expr(expr);
+                self.write(")");
+            }
             TypedFunction::Stddev { expr } => {
-                self.write_keyword("STDDEV(");
+                // Sample std-dev: PG STDDEV/STDDEV_SAMP -> T-SQL STDEV.
+                // (Oracle natively supports STDDEV, so scope to T-SQL only.)
+                let name = if is_tsql { "STDEV" } else { "STDDEV" };
+                self.write_keyword(name);
+                self.write("(");
+                self.gen_expr(expr);
+                self.write(")");
+            }
+            TypedFunction::StddevPop { expr } => {
+                // Population std-dev: PG STDDEV_POP -> T-SQL STDEVP.
+                // (Oracle natively supports STDDEV_POP, so scope to T-SQL only.)
+                let name = if is_tsql { "STDEVP" } else { "STDDEV_POP" };
+                self.write_keyword(name);
+                self.write("(");
                 self.gen_expr(expr);
                 self.write(")");
             }

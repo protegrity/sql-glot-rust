@@ -327,7 +327,9 @@ fn typed_function_canonical_name(func: &TypedFunction) -> &'static str {
         TypedFunction::ArrayAgg { .. } => "ARRAY_AGG",
         TypedFunction::ApproxDistinct { .. } => "APPROX_DISTINCT",
         TypedFunction::Variance { .. } => "VARIANCE",
+        TypedFunction::VariancePop { .. } => "VAR_POP",
         TypedFunction::Stddev { .. } => "STDDEV",
+        TypedFunction::StddevPop { .. } => "STDDEV_POP",
         TypedFunction::GroupConcat { .. } => "GROUP_CONCAT",
         TypedFunction::ArrayConcat { .. } => "ARRAY_CONCAT",
         TypedFunction::ArrayContains { .. } => "ARRAY_CONTAINS",
@@ -398,7 +400,9 @@ fn typed_function_args(func: &TypedFunction) -> Vec<Expr> {
         | TypedFunction::Day { expr }
         | TypedFunction::ApproxDistinct { expr }
         | TypedFunction::Variance { expr }
+        | TypedFunction::VariancePop { expr }
         | TypedFunction::Stddev { expr }
+        | TypedFunction::StddevPop { expr }
         | TypedFunction::FirstValue { expr }
         | TypedFunction::LastValue { expr } => vec![*expr.clone()],
         TypedFunction::DateTrunc { unit, expr } => {

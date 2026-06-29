@@ -689,7 +689,9 @@ function renaming.
 | `ArrayAgg` | `{ expr, distinct }` | `ARRAY_AGG(x)` / `LIST(x)` / `COLLECT_LIST(x)` |
 | `ApproxDistinct` | `{ expr }` | `APPROX_DISTINCT(x)` |
 | `Variance` | `{ expr }` | `VARIANCE(x)` / `VAR_SAMP(x)` |
-| `Stddev` | `{ expr }` | `STDDEV(x)` / `STDDEV_SAMP(x)` |
+| `VariancePop` | `{ expr }` | `VAR_POP(x)` (T-SQL `VARP(x)`) |
+| `Stddev` | `{ expr }` | `STDDEV(x)` / `STDDEV_SAMP(x)` (T-SQL `STDEV(x)`) |
+| `StddevPop` | `{ expr }` | `STDDEV_POP(x)` (T-SQL `STDEVP(x)`) |
 
 #### Array
 
