@@ -2225,6 +2225,49 @@ fn test_pg_to_tsql_extract_epoch() {
     );
 }
 
+#[test]
+fn test_pg_to_tsql_extract_dow() {
+    // PG DOW = 0(Sun)..6(Sat). Preserve numbering independent of @@DATEFIRST
+    // (T-SQL DATEPART(weekday, ..) is 1..7 and @@DATEFIRST-dependent).
+    validate_with_dialect(
+        "SELECT EXTRACT(DOW FROM created_at) FROM t",
+        "SELECT (DATEPART(WEEKDAY, created_at) + @@DATEFIRST - 1) % 7 FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_extract_doy() {
+    validate_with_dialect(
+        "SELECT EXTRACT(DOY FROM created_at) FROM t",
+        "SELECT DATEPART(DAYOFYEAR, created_at) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_extract_week_is_iso() {
+    // PG EXTRACT(WEEK ..) is ISO-8601; map to T-SQL ISO_WEEK (not plain `week`).
+    validate_with_dialect(
+        "SELECT EXTRACT(WEEK FROM created_at) FROM t",
+        "SELECT DATEPART(ISO_WEEK, created_at) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_extract_quarter() {
+    validate_with_dialect(
+        "SELECT EXTRACT(QUARTER FROM created_at) FROM t",
+        "SELECT DATEPART(QUARTER, created_at) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
 // ── Change 3: LIMIT/OFFSET → OFFSET/FETCH ──────────────────────────────────
 
 #[test]
@@ -2469,10 +2512,7 @@ fn cr014_parse_paren_setop_derived_table() {
     // Each set-op branch is individually parenthesised — must parse.
     for op in ["EXCEPT", "UNION", "UNION ALL", "INTERSECT"] {
         let sql = format!("SELECT count(*) FROM ((SELECT 1) {op} (SELECT 2)) x");
-        assert!(
-            parse(&sql, Dialect::Postgres).is_ok(),
-            "must parse: {sql}"
-        );
+        assert!(parse(&sql, Dialect::Postgres).is_ok(), "must parse: {sql}");
     }
 }
 
@@ -2491,7 +2531,13 @@ fn cr014_parse_chained_except_derived_table() {
 fn cr014_controls_still_parse() {
     // Redundant nesting and no-branch-parens set-op were already OK.
     assert!(parse("SELECT count(*) FROM ((SELECT 1)) x", Dialect::Postgres).is_ok());
-    assert!(parse("SELECT count(*) FROM (SELECT 1 EXCEPT SELECT 2) x", Dialect::Postgres).is_ok());
+    assert!(
+        parse(
+            "SELECT count(*) FROM (SELECT 1 EXCEPT SELECT 2) x",
+            Dialect::Postgres
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -2504,7 +2550,10 @@ fn cr014_transpile_paren_setop_pg_to_tsql() {
     .unwrap();
     let u = out.to_uppercase();
     assert!(u.contains("EXCEPT"), "set op preserved: {out}");
-    assert!(u.contains(" X") || u.ends_with('X'), "alias preserved: {out}");
+    assert!(
+        u.contains(" X") || u.ends_with('X'),
+        "alias preserved: {out}"
+    );
 }
 
 #[test]
@@ -2518,4 +2567,3 @@ fn cr014_transpile_paren_setop_pg_identity() {
         );
     }
 }
-

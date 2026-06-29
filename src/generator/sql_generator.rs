@@ -2111,17 +2111,40 @@ impl Generator {
             }
             Expr::Extract { field, expr } => {
                 if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
-                    if *field == DateTimeField::Epoch {
-                        // EXTRACT(EPOCH FROM x) → DATEDIFF(SECOND, '1970-01-01', x)
-                        self.write_keyword("DATEDIFF(SECOND, '1970-01-01', ");
-                        self.gen_expr(expr);
-                        self.write(")");
-                    } else {
-                        self.write_keyword("DATEPART(");
-                        self.gen_datetime_field(field);
-                        self.write(", ");
-                        self.gen_expr(expr);
-                        self.write(")");
+                    match field {
+                        DateTimeField::Epoch => {
+                            // EXTRACT(EPOCH FROM x) → DATEDIFF(SECOND, '1970-01-01', x)
+                            self.write_keyword("DATEDIFF(SECOND, '1970-01-01', ");
+                            self.gen_expr(expr);
+                            self.write(")");
+                        }
+                        DateTimeField::DayOfWeek => {
+                            // PG DOW = 0(Sun)..6(Sat); T-SQL DATEPART(weekday, ..) = 1..7
+                            // and is @@DATEFIRST-dependent. Preserve PG numbering in a
+                            // @@DATEFIRST-independent way. Parentheses are required: T-SQL
+                            // `%` binds tighter than `+`/`-`.
+                            self.write_keyword("(DATEPART(WEEKDAY, ");
+                            self.gen_expr(expr);
+                            self.write_keyword(") + @@DATEFIRST - 1) % 7");
+                        }
+                        _ => {
+                            self.write_keyword("DATEPART(");
+                            match field {
+                                // Postgres spellings that are not valid T-SQL dateparts.
+                                DateTimeField::DayOfYear => self.write("DAYOFYEAR"),
+                                // PG WEEK is ISO-8601; plain T-SQL `week` is not.
+                                DateTimeField::Week => self.write("ISO_WEEK"),
+                                // YEAR/QUARTER/MONTH/DAY/HOUR/MINUTE/SECOND/MILLI/MICRO/NANO
+                                // already render to valid dateparts. TIMEZONE/TIMEZONE_HOUR/
+                                // TIMEZONE_MINUTE have no equivalent and fall through to an
+                                // invalid name on purpose (fail-safe hard error rather than
+                                // silently wrong units).
+                                _ => self.gen_datetime_field(field),
+                            }
+                            self.write(", ");
+                            self.gen_expr(expr);
+                            self.write(")");
+                        }
                     }
                 } else {
                     self.write_keyword("EXTRACT(");
