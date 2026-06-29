@@ -331,11 +331,11 @@ impl Generator {
             if self.pretty {
                 self.indent_up();
                 self.newline();
-                self.gen_expr(wh);
+                self.gen_condition(wh);
                 self.indent_down();
             } else {
                 self.write(" ");
-                self.gen_expr(wh);
+                self.gen_condition(wh);
             }
         }
 
@@ -359,11 +359,11 @@ impl Generator {
             if self.pretty {
                 self.indent_up();
                 self.newline();
-                self.gen_expr(having);
+                self.gen_condition(having);
                 self.indent_down();
             } else {
                 self.write(" ");
-                self.gen_expr(having);
+                self.gen_condition(having);
             }
         }
 
@@ -373,11 +373,11 @@ impl Generator {
             if self.pretty {
                 self.indent_up();
                 self.newline();
-                self.gen_expr(qualify);
+                self.gen_condition(qualify);
                 self.indent_down();
             } else {
                 self.write(" ");
-                self.gen_expr(qualify);
+                self.gen_condition(qualify);
             }
         }
 
@@ -682,7 +682,7 @@ impl Generator {
                 self.write(" ");
             }
             self.write_keyword("ON ");
-            self.gen_expr(on);
+            self.gen_condition(on);
         }
         if !join.using.is_empty() {
             if self.pretty {
@@ -934,11 +934,11 @@ impl Generator {
             if self.pretty {
                 self.indent_up();
                 self.newline();
-                self.gen_expr(wh);
+                self.gen_condition(wh);
                 self.indent_down();
             } else {
                 self.write(" ");
-                self.gen_expr(wh);
+                self.gen_condition(wh);
             }
         }
 
@@ -984,11 +984,11 @@ impl Generator {
             if self.pretty {
                 self.indent_up();
                 self.newline();
-                self.gen_expr(wh);
+                self.gen_condition(wh);
                 self.indent_down();
             } else {
                 self.write(" ");
-                self.gen_expr(wh);
+                self.gen_condition(wh);
             }
         }
 
@@ -1096,7 +1096,7 @@ impl Generator {
 
         if let Some(cond) = &clause.condition {
             self.write_keyword(" AND ");
-            self.gen_expr(cond);
+            self.gen_condition(cond);
         }
 
         self.write_keyword(" THEN");
@@ -1702,6 +1702,81 @@ impl Generator {
         }
     }
 
+    /// Emit `e` in a *condition* (search-condition) position.
+    ///
+    /// SQL Server has no native boolean type: a bare boolean expression (a
+    /// `bit` column, function result, or boolean literal) is not a valid
+    /// predicate and is rejected with error 4145 ("An expression of non-boolean
+    /// type specified in a context where a condition is expected"). For the
+    /// T-SQL family we wrap such a bare boolean as `<e> = 1`, recursing through
+    /// the logical connectives (`AND`/`OR`/`XOR`/`NOT`/parentheses) so each
+    /// nested operand is fixed, and lowering a bare boolean literal to `1 = 1`
+    /// / `1 = 0`. Expressions that are already predicates (comparisons,
+    /// `IS NULL`, `IN`, `LIKE`, `BETWEEN`, `EXISTS`, …) are emitted unchanged.
+    /// Every non-T-SQL dialect delegates straight to `gen_expr`, so their
+    /// output is byte-for-byte identical.
+    fn gen_condition(&mut self, e: &Expr) {
+        if !matches!(self.dialect, Some(d) if crate::dialects::is_tsql_family(d)) {
+            self.gen_expr(e);
+            return;
+        }
+        match e {
+            // Logical connectives: each operand is itself a condition position.
+            Expr::BinaryOp { left, op, right }
+                if matches!(
+                    op,
+                    BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor
+                ) =>
+            {
+                self.gen_condition(left);
+                self.write(Self::binary_op_str(op));
+                self.gen_condition(right);
+            }
+            Expr::UnaryOp {
+                op: UnaryOperator::Not,
+                expr,
+            } => {
+                self.write("NOT ");
+                self.gen_condition(expr);
+            }
+            Expr::Nested(inner) => {
+                self.write("(");
+                self.gen_condition(inner);
+                self.write(")");
+            }
+            // Already boolean-typed predicates: emit unchanged.
+            Expr::BinaryOp {
+                op:
+                    BinaryOperator::Eq
+                    | BinaryOperator::Neq
+                    | BinaryOperator::Lt
+                    | BinaryOperator::Gt
+                    | BinaryOperator::LtEq
+                    | BinaryOperator::GtEq,
+                ..
+            }
+            | Expr::Between { .. }
+            | Expr::IsNull { .. }
+            | Expr::IsBool { .. }
+            | Expr::InList { .. }
+            | Expr::InSubquery { .. }
+            | Expr::Like { .. }
+            | Expr::ILike { .. }
+            | Expr::SimilarTo { .. }
+            | Expr::Exists { .. }
+            | Expr::AnyOp { .. }
+            | Expr::AllOp { .. } => self.gen_expr(e),
+            // Bare boolean literal in a condition position → `1 = 1` / `1 = 0`.
+            Expr::Boolean(b) => self.write(if *b { "1 = 1" } else { "1 = 0" }),
+            // Any other bare scalar (column, function, cast, scalar subquery,
+            // …) is a PostgreSQL boolean here; wrap it into a predicate.
+            _ => {
+                self.gen_expr(e);
+                self.write(" = 1");
+            }
+        }
+    }
+
     fn gen_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Column {
@@ -2011,7 +2086,15 @@ impl Generator {
                 for (cond, result) in when_clauses {
                     self.write(" ");
                     self.write_keyword("WHEN ");
-                    self.gen_expr(cond);
+                    // A simple CASE (`CASE <operand> WHEN <value>`) compares each
+                    // WHEN value against the operand, so it is NOT a condition
+                    // position. Only a searched CASE (`CASE WHEN <cond>`) puts a
+                    // boolean search condition here and needs T-SQL wrapping.
+                    if operand.is_some() {
+                        self.gen_expr(cond);
+                    } else {
+                        self.gen_condition(cond);
+                    }
                     self.write(" ");
                     self.write_keyword("THEN ");
                     self.gen_expr(result);

@@ -2654,3 +2654,158 @@ fn cr014_transpile_paren_setop_pg_identity() {
         );
     }
 }
+
+// ── CR-018: bare boolean in a condition position wrapped to `= 1` for T-SQL ──
+//
+// SQL Server has no native boolean type, so a bare boolean expression in a
+// search-condition position (WHERE / HAVING / QUALIFY / JOIN … ON / searched
+// CASE WHEN / AND / OR / NOT) is rejected with error 4145. The generator wraps
+// such a bare boolean as `<expr> = 1` for the T-SQL family only.
+
+#[test]
+fn cr018_where_bare_boolean_pg_to_tsql() {
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE b",
+        "SELECT 1 FROM t WHERE b = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr018_where_not_bare_boolean() {
+    // `NOT b` → `NOT b = 1`, which T-SQL parses as `NOT (b = 1)` (`=` binds
+    // tighter than `NOT`) — identical 3-valued logic to PostgreSQL `NOT b`.
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE NOT b",
+        "SELECT 1 FROM t WHERE NOT b = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr018_where_and_mixed_with_predicate() {
+    // Only the bare operand is wrapped; the existing IS NOT NULL predicate stays.
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE b AND x IS NOT NULL",
+        "SELECT 1 FROM t WHERE b = 1 AND x IS NOT NULL",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr018_where_or_both_bare() {
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE b OR c",
+        "SELECT 1 FROM t WHERE b = 1 OR c = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr018_searched_case_when_bare_boolean() {
+    // The smoking-gun case from the ticket: bare boolean in a searched CASE WHEN.
+    let out = transpile(
+        "SELECT SUM(CASE WHEN b THEN 1 ELSE 0 END) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    )
+    .unwrap();
+    assert!(out.contains("WHEN b = 1 THEN"), "got: {out}");
+    assert!(!out.contains("WHEN b THEN"), "must not stay bare: {out}");
+}
+
+#[test]
+fn cr018_join_on_bare_boolean() {
+    let out = transpile(
+        "SELECT 1 FROM t1 JOIN t2 ON t2.b",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    )
+    .unwrap();
+    assert!(out.contains("ON t2.b = 1"), "got: {out}");
+}
+
+#[test]
+fn cr018_where_boolean_literals() {
+    // Bare TRUE / FALSE in a condition position → `1 = 1` / `1 = 0`, not the
+    // invalid bare `1` / `0` produced by the value-context Boolean arm.
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE TRUE",
+        "SELECT 1 FROM t WHERE 1 = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE FALSE",
+        "SELECT 1 FROM t WHERE 1 = 0",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── CR-018 controls: predicates already valid must NOT be double-wrapped ──
+
+#[test]
+fn cr018_control_existing_predicate_not_double_wrapped() {
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE b = 1",
+        "SELECT 1 FROM t WHERE b = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE x IS NULL",
+        "SELECT 1 FROM t WHERE x IS NULL",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE x BETWEEN 1 AND 9",
+        "SELECT 1 FROM t WHERE x BETWEEN 1 AND 9",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr018_control_simple_case_when_value_not_wrapped() {
+    // A simple CASE (`CASE <operand> WHEN <value>`) compares each WHEN value
+    // against the operand — it is NOT a condition position and must be left
+    // alone (wrapping it would produce the broken `WHEN 1 = 1`).
+    let out = transpile(
+        "SELECT CASE status WHEN 1 THEN 'a' ELSE 'b' END FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    )
+    .unwrap();
+    assert!(out.contains("WHEN 1 THEN"), "got: {out}");
+    assert!(!out.contains("1 = 1"), "simple CASE wrongly wrapped: {out}");
+}
+
+#[test]
+fn cr018_control_non_tsql_passthrough() {
+    // Non-T-SQL targets must be byte-for-byte unchanged (the helper delegates
+    // straight to gen_expr off the T-SQL family).
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE b",
+        "SELECT 1 FROM t WHERE b",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT 1 FROM t WHERE TRUE",
+        "SELECT 1 FROM t WHERE TRUE",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT SUM(CASE WHEN b THEN 1 ELSE 0 END) FROM t",
+        "SELECT SUM(CASE WHEN b THEN 1 ELSE 0 END) FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
