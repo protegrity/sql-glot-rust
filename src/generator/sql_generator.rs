@@ -2052,16 +2052,24 @@ impl Generator {
                         _ => None,
                     };
                     if let Some(kw) = ansi_keyword {
-                        let is_mysql_family = matches!(
+                        // Emit the ANSI typed string literal (DATE 'x' / TIME 'x' /
+                        // TIMESTAMP 'x') only for dialects that support it. The MySQL
+                        // family and the T-SQL family (SQL Server, Fabric) do NOT —
+                        // they must use CAST(... AS DATE|TIME), produced by the
+                        // fallthrough below. SQL Server rejects ANSI date/time
+                        // literals with syntax errors 102/156.
+                        let ansi_typed_literal_unsupported = matches!(
                             self.dialect,
                             Some(
                                 Dialect::Mysql
                                     | Dialect::Doris
                                     | Dialect::SingleStore
                                     | Dialect::StarRocks
+                                    | Dialect::Tsql
+                                    | Dialect::Fabric
                             )
                         );
-                        if !is_mysql_family {
+                        if !ansi_typed_literal_unsupported {
                             self.write_keyword(kw);
                             self.write(" '");
                             self.write(val);

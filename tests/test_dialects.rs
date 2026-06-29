@@ -522,6 +522,96 @@ fn test_bytea_to_blob_sqlite() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// ANSI typed date/time literals → T-SQL CAST (CR-015 / PSQ-2731)
+// SQL Server has no ANSI `DATE 'x'` / `TIME 'x'` syntax; both the CAST and the
+// ANSI-literal input forms parse to Cast{StringLiteral, Date|Time} and must be
+// emitted as CAST(... AS DATE|TIME) for the T-SQL family.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_cast_date_literal_to_tsql() {
+    assert_transpile(
+        "SELECT CAST('2023-01-01' AS DATE)",
+        "SELECT CAST('2023-01-01' AS DATE)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_ansi_date_literal_to_tsql() {
+    assert_transpile(
+        "SELECT DATE '2023-01-01'",
+        "SELECT CAST('2023-01-01' AS DATE)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_cast_time_literal_to_tsql() {
+    assert_transpile(
+        "SELECT CAST('10:30:00' AS TIME)",
+        "SELECT CAST('10:30:00' AS TIME)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_ansi_time_literal_to_tsql() {
+    assert_transpile(
+        "SELECT TIME '10:30:00'",
+        "SELECT CAST('10:30:00' AS TIME)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_ansi_date_literal_predicate_to_tsql() {
+    assert_transpile(
+        "SELECT COUNT(*) FROM transactions WHERE created_at >= DATE '2023-01-01'",
+        "SELECT COUNT(*) FROM transactions WHERE created_at >= CAST('2023-01-01' AS DATE)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_cast_timestamp_literal_to_tsql_unchanged() {
+    // TIMESTAMP is diverted to DATETIME2 by map_data_type — must stay that way.
+    assert_transpile(
+        "SELECT CAST('2023-01-01 10:30:00' AS TIMESTAMP)",
+        "SELECT CAST('2023-01-01 10:30:00' AS DATETIME2)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_ansi_date_literal_preserved_for_oracle() {
+    // Control: Oracle supports the ANSI typed literal — it must be preserved.
+    assert_transpile(
+        "SELECT DATE '2023-01-01'",
+        "SELECT DATE '2023-01-01'",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_ansi_date_literal_preserved_for_postgres() {
+    // Control: Postgres supports the ANSI typed literal — it must be preserved.
+    assert_transpile(
+        "SELECT DATE '2023-01-01'",
+        "SELECT DATE '2023-01-01'",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Compound transformations – multiple functions + types in one query
 // (from Python dialect tests – complex transpilation)
 // ═════════════════════════════════════════════════════════════════════════════
