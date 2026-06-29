@@ -908,7 +908,10 @@ fn infer_typed_function_type(func: &TypedFunction, ann: &TypeAnnotations) -> Opt
             Some(DataType::Array(elem.map(Box::new)))
         }
         TypedFunction::ApproxDistinct { .. } => Some(DataType::BigInt),
-        TypedFunction::Variance { .. } | TypedFunction::Stddev { .. } => Some(DataType::Double),
+        TypedFunction::Variance { .. }
+        | TypedFunction::VariancePop { .. }
+        | TypedFunction::Stddev { .. }
+        | TypedFunction::StddevPop { .. } => Some(DataType::Double),
         TypedFunction::GroupConcat { .. } => Some(DataType::Varchar(None)),
 
         // ── Array ────────────────────────────────────────────────────

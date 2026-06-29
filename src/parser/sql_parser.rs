@@ -9898,9 +9898,21 @@ impl Parser {
                     expr: Box::new(it.next()?),
                 }
             }
+            "VAR_POP" => {
+                let mut it = args.into_iter();
+                TypedFunction::VariancePop {
+                    expr: Box::new(it.next()?),
+                }
+            }
             "STDDEV" | "STDDEV_SAMP" => {
                 let mut it = args.into_iter();
                 TypedFunction::Stddev {
+                    expr: Box::new(it.next()?),
+                }
+            }
+            "STDDEV_POP" => {
+                let mut it = args.into_iter();
+                TypedFunction::StddevPop {
                     expr: Box::new(it.next()?),
                 }
             }

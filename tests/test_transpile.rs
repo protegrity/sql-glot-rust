@@ -1559,6 +1559,93 @@ fn test_typed_variance_stddev() {
     validate_identity("SELECT STDDEV(score) FROM t");
 }
 
+// ── CR-017: statistical aggregates lowered to T-SQL spellings ──
+
+#[test]
+fn test_pg_to_tsql_stddev() {
+    // STDDEV / STDDEV_SAMP (sample) -> T-SQL STDEV
+    validate_with_dialect(
+        "SELECT STDDEV(x) FROM t",
+        "SELECT STDEV(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT STDDEV_SAMP(x) FROM t",
+        "SELECT STDEV(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_stddev_pop() {
+    validate_with_dialect(
+        "SELECT STDDEV_POP(x) FROM t",
+        "SELECT STDEVP(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_var_pop() {
+    validate_with_dialect(
+        "SELECT VAR_POP(x) FROM t",
+        "SELECT VARP(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_variance_controls() {
+    // VARIANCE / VAR_SAMP (sample) -> T-SQL VAR (already correct; guard against regression)
+    validate_with_dialect(
+        "SELECT VARIANCE(x) FROM t",
+        "SELECT VAR(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT VAR_SAMP(x) FROM t",
+        "SELECT VAR(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_stat_aggregates_non_tsql_passthrough() {
+    // Non-T-SQL dialects keep the ANSI/Postgres spellings (population variants
+    // previously fell through as generic functions -> identical result).
+    validate_with_dialect(
+        "SELECT STDDEV_POP(x) FROM t",
+        "SELECT STDDEV_POP(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT VAR_POP(x) FROM t",
+        "SELECT VAR_POP(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    // Oracle natively supports STDDEV / STDDEV_POP -> left unchanged.
+    validate_with_dialect(
+        "SELECT STDDEV(x) FROM t",
+        "SELECT STDDEV(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    validate_with_dialect(
+        "SELECT STDDEV_POP(x) FROM t",
+        "SELECT STDDEV_POP(x) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
 // ── Window typed functions ──
 
 #[test]
