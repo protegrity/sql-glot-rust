@@ -2229,6 +2229,51 @@ impl Generator {
                             self.write(")");
                         }
                     }
+                } else if matches!(self.dialect, Some(Dialect::Oracle)) {
+                    // Oracle EXTRACT accepts only YEAR/MONTH/DAY/HOUR/MINUTE/SECOND/
+                    // TIMEZONE_*. The Postgres-only fields (QUARTER/WEEK/DOY/DOW) must be
+                    // rewritten or Oracle rejects the field name (ORA-00907). TO_CHAR
+                    // returns VARCHAR2, so wrap in TO_NUMBER to preserve Postgres'
+                    // numeric EXTRACT result type (parity for GROUP BY/ORDER BY/compare).
+                    match field {
+                        DateTimeField::Quarter => {
+                            self.write_keyword("TO_NUMBER(TO_CHAR(");
+                            self.gen_expr(expr);
+                            self.write_keyword(", 'Q'))");
+                        }
+                        DateTimeField::Week => {
+                            // PG EXTRACT(WEEK) is ISO-8601 → 'IW' (NOT 'WW', Jan-1-based).
+                            self.write_keyword("TO_NUMBER(TO_CHAR(");
+                            self.gen_expr(expr);
+                            self.write_keyword(", 'IW'))");
+                        }
+                        DateTimeField::DayOfYear => {
+                            self.write_keyword("TO_NUMBER(TO_CHAR(");
+                            self.gen_expr(expr);
+                            self.write_keyword(", 'DDD'))");
+                        }
+                        DateTimeField::DayOfWeek => {
+                            // PG DOW = 0(Sun)..6(Sat). TO_CHAR(x,'D') is NLS_TERRITORY-
+                            // dependent, so anchor on a known Sunday (1970-01-04) and take
+                            // the day count mod 7 — NLS-independent, preserves PG numbering.
+                            self.write_keyword("MOD(TRUNC(");
+                            self.gen_expr(expr);
+                            self.write_keyword(") - DATE '1970-01-04', 7)");
+                        }
+                        _ => {
+                            // YEAR/MONTH/DAY/HOUR/MINUTE/SECOND/TIMEZONE_HOUR/TIMEZONE_MINUTE
+                            // are valid Oracle EXTRACT fields — keep the native form. Fields
+                            // with no Oracle equivalent (EPOCH, MILLI/MICRO/NANO, bare
+                            // TIMEZONE) fall through to a native EXTRACT Oracle rejects — a
+                            // fail-safe hard error rather than silently-wrong output.
+                            self.write_keyword("EXTRACT(");
+                            self.gen_datetime_field(field);
+                            self.write(" ");
+                            self.write_keyword("FROM ");
+                            self.gen_expr(expr);
+                            self.write(")");
+                        }
+                    }
                 } else {
                     self.write_keyword("EXTRACT(");
                     self.gen_datetime_field(field);
