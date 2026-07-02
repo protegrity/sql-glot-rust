@@ -2809,3 +2809,118 @@ fn cr018_control_non_tsql_passthrough() {
         Dialect::Postgres,
     );
 }
+
+// ── CR-019: safe divide for T-SQL — `a / b` → `a / NULLIF(b, 0)` ──
+//
+// SQL Server does not short-circuit the ANDed WHERE qual list the way
+// PostgreSQL does, so a divisor that is zero only for rows a guard was meant
+// to exclude is still evaluated, raising "Divide by zero error" (code 8134).
+// The transform wraps the divisor in NULLIF(divisor, 0) for the T-SQL family
+// so a zero divisor becomes NULL (and the surrounding comparison drops the
+// row) instead of erroring. NULLIF(b, 0) == b whenever b <> 0.
+
+#[test]
+fn cr019_divide_pg_to_tsql() {
+    validate_with_dialect(
+        "SELECT a / b FROM t",
+        "SELECT a / NULLIF(b, 0) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr019_divide_cast_divisor() {
+    validate_with_dialect(
+        "SELECT a / CAST(b AS DECIMAL(18, 4)) FROM t",
+        "SELECT a / NULLIF(CAST(b AS DECIMAL(18, 4)), 0) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr019_modulo_pg_to_tsql() {
+    // `x % 0` raises the same 8134 error class, so modulo is guarded too.
+    validate_with_dialect(
+        "SELECT a % b FROM t",
+        "SELECT a % NULLIF(b, 0) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr019_divide_parenthesized_dividend() {
+    // Only the divisor is guarded; the parenthesized dividend is untouched.
+    validate_with_dialect(
+        "SELECT (x + y) / z FROM t",
+        "SELECT (x + y) / NULLIF(z, 0) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr019_q74_outer_predicate() {
+    // The reported q74 shape: the guarded division in the outer WHERE.
+    let out = transpile(
+        "SELECT count(*) FROM (SELECT c.id cid, SUM(t.y1) y1, SUM(t.y2) y2 \
+         FROM t GROUP BY c.id) v \
+         WHERE v.y1 > 0 AND v.y2 > 0 AND v.y2 / CAST(v.y1 AS DECIMAL(18, 4)) > 1.0",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    )
+    .unwrap();
+    assert!(
+        out.contains("v.y2 / NULLIF(CAST(v.y1 AS DECIMAL(18, 4)), 0)"),
+        "divisor must be zero-guarded: {out}"
+    );
+}
+
+#[test]
+fn cr019_already_guarded_divisor_not_double_wrapped() {
+    // A divisor already written as NULLIF(<x>, 0) in the source must not be
+    // wrapped again into NULLIF(NULLIF(<x>, 0), 0).
+    validate_with_dialect(
+        "SELECT a / NULLIF(b, 0) FROM t",
+        "SELECT a / NULLIF(b, 0) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr019_control_non_tsql_passthrough() {
+    // Non-T-SQL targets must be byte-for-byte unchanged — no NULLIF injected.
+    validate_with_dialect(
+        "SELECT a / b FROM t",
+        "SELECT a / b FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT a % b FROM t",
+        "SELECT a % b FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr019_control_other_operators_untouched() {
+    // Only Divide / Modulo are guarded; other arithmetic operators are left
+    // as-is for the T-SQL family.
+    validate_with_dialect(
+        "SELECT a - b FROM t",
+        "SELECT a - b FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT a * b FROM t",
+        "SELECT a * b FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}

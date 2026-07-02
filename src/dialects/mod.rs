@@ -752,6 +752,22 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
     }
 }
 
+/// Returns `true` when `expr` is already a zero-guarded divisor — either an
+/// `Expr::NullIf { .., r#else: 0 }` node or a `NULLIF(<x>, 0)` function call
+/// (the parser lowers `NULLIF(...)` to `Expr::Function`). Used by the CR-019
+/// safe-divide transform to avoid emitting a redundant
+/// `NULLIF(NULLIF(<x>, 0), 0)` when the source already guarded the divisor.
+fn is_zero_guarded_divisor(expr: &Expr) -> bool {
+    let is_zero = |e: &Expr| matches!(e, Expr::Number(n) if n == "0");
+    match expr {
+        Expr::NullIf { r#else, .. } => is_zero(r#else),
+        Expr::Function { name, args, .. } => {
+            name.eq_ignore_ascii_case("NULLIF") && args.len() == 2 && is_zero(&args[1])
+        }
+        _ => false,
+    }
+}
+
 /// Transform an expression for the target dialect.
 fn transform_expr(expr: Expr, target: Dialect) -> Expr {
     match expr {
@@ -876,6 +892,29 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
                 {
                     return dateadd;
                 }
+            }
+
+            // Change 7 (CR-019): a / b → a / NULLIF(b, 0) for the T-SQL family,
+            // so a zero divisor yields NULL instead of raising "Divide by zero"
+            // (code 8134). SQL Server does not short-circuit the ANDed WHERE qual
+            // list the way PostgreSQL does, so a guard such as `WHERE b <> 0`
+            // cannot be relied on to protect the division — the guard must live
+            // in the expression itself. NULLIF(b, 0) returns b unchanged whenever
+            // b <> 0, so non-zero divisors are behaviorally unaffected. Modulo is
+            // included because `x % 0` raises the same 8134 error class. A divisor
+            // already written as NULLIF(<x>, 0) is left as-is (no double wrap).
+            if is_tsql_family(target)
+                && matches!(op, BinaryOperator::Divide | BinaryOperator::Modulo)
+                && !is_zero_guarded_divisor(&right_transformed)
+            {
+                return Expr::BinaryOp {
+                    left: Box::new(left_transformed),
+                    op,
+                    right: Box::new(Expr::NullIf {
+                        expr: Box::new(right_transformed),
+                        r#else: Box::new(Expr::Number("0".to_string())),
+                    }),
+                };
             }
 
             Expr::BinaryOp {
