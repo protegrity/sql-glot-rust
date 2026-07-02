@@ -2355,6 +2355,95 @@ fn test_pg_to_tsql_extract_quarter() {
     );
 }
 
+// ── CR-020 (PSQ-2759): PG EXTRACT(QUARTER/WEEK/DOY/DOW) → Oracle ────────────
+// Oracle EXTRACT rejects these Postgres-only fields (ORA-00907). Rewrite to
+// TO_CHAR/date arithmetic, wrapped in TO_NUMBER to preserve the numeric type.
+
+#[test]
+fn test_pg_to_oracle_extract_quarter() {
+    validate_with_dialect(
+        "SELECT EXTRACT(QUARTER FROM created_at) FROM t",
+        "SELECT TO_NUMBER(TO_CHAR(created_at, 'Q')) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_extract_week_is_iso() {
+    // PG EXTRACT(WEEK) is ISO-8601 → 'IW' (not 'WW', which is Jan-1-based).
+    validate_with_dialect(
+        "SELECT EXTRACT(WEEK FROM created_at) FROM t",
+        "SELECT TO_NUMBER(TO_CHAR(created_at, 'IW')) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_extract_doy() {
+    validate_with_dialect(
+        "SELECT EXTRACT(DOY FROM created_at) FROM t",
+        "SELECT TO_NUMBER(TO_CHAR(created_at, 'DDD')) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_extract_dow() {
+    // PG DOW = 0(Sun)..6(Sat). Fixed-anchor MOD keeps numbering NLS-independent.
+    validate_with_dialect(
+        "SELECT EXTRACT(DOW FROM created_at) FROM t",
+        "SELECT MOD(TRUNC(created_at) - DATE '1970-01-04', 7) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_extract_year_native_unchanged() {
+    // Native Oracle EXTRACT fields must stay as-is.
+    validate_with_dialect(
+        "SELECT EXTRACT(YEAR FROM d) FROM t",
+        "SELECT EXTRACT(YEAR FROM d) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_extract_month_native_unchanged() {
+    validate_with_dialect(
+        "SELECT EXTRACT(MONTH FROM d) FROM t",
+        "SELECT EXTRACT(MONTH FROM d) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_pg_extract_dow_identity_unchanged() {
+    // Generic (non-Oracle, non-T-SQL) path must be untouched by the Oracle branch.
+    validate_with_dialect(
+        "SELECT EXTRACT(DOW FROM x)",
+        "SELECT EXTRACT(DOW FROM x)",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_extract_dow_still_datepart() {
+    // CR-016 T-SQL path must be untouched by the Oracle branch.
+    validate_with_dialect(
+        "SELECT EXTRACT(DOW FROM x)",
+        "SELECT (DATEPART(WEEKDAY, x) + @@DATEFIRST - 1) % 7",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
 // ── Change 3: LIMIT/OFFSET → OFFSET/FETCH ──────────────────────────────────
 
 #[test]
