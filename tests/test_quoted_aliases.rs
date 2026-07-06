@@ -164,3 +164,55 @@ fn test_implicit_quoted_alias() {
         Dialect::Postgres,
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Single-quoted (string literal) alias - SQLite / MySQL / Snowflake
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_single_quoted_column_alias_normalizes_to_double() {
+    validate(
+        r#"SELECT record_id AS 'Record Id' FROM deals"#,
+        r#"SELECT record_id AS "Record Id" FROM deals"#,
+        Dialect::Sqlite,
+    );
+}
+
+#[test]
+fn test_single_quoted_table_alias_normalizes_to_double() {
+    validate(
+        r#"SELECT a FROM deals AS 't'"#,
+        r#"SELECT a FROM deals AS "t""#,
+        Dialect::Sqlite,
+    );
+}
+
+#[test]
+fn test_single_quoted_alias_with_quoted_column_ref() {
+    validate(
+        r#"SELECT "deals"."record_id" AS 'Record Id' FROM "deals""#,
+        r#"SELECT "deals"."record_id" AS "Record Id" FROM "deals""#,
+        Dialect::Sqlite,
+    );
+}
+
+#[test]
+fn test_single_quoted_alias_with_escaped_quote() {
+    validate(
+        r#"SELECT 1 AS 'It''s'"#,
+        r#"SELECT 1 AS "It's""#,
+        Dialect::Sqlite,
+    );
+}
+
+#[test]
+fn test_single_quoted_alias_transpile_to_mysql() {
+    let result = transpile(r#"SELECT 7 AS 'Mixed'"#, Dialect::Sqlite, Dialect::Mysql).unwrap();
+    assert_eq!(result, "SELECT 7 AS `Mixed`");
+}
+
+#[test]
+fn test_string_literal_expression_not_treated_as_alias() {
+    // A trailing string with no AS stays a string expression, never an alias.
+    validate_identity(r#"SELECT 'a', 'b' FROM t"#, Dialect::Sqlite);
+}
