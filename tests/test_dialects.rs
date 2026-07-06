@@ -65,6 +65,12 @@ fn test_all_dialect_identities() {
     ];
     for dialect in Dialect::all() {
         for sql in &queries {
+            // Oracle rewrites a FROM-less SELECT to `... FROM DUAL` (PSQ-2848),
+            // so `SELECT 1` is not a verbatim identity there; that behavior is
+            // covered by the dedicated PSQ-2848 tests in test_transpile.rs.
+            if *dialect == Dialect::Oracle && *sql == "SELECT 1" {
+                continue;
+            }
             assert_identity(sql, *dialect);
         }
     }
@@ -592,9 +598,10 @@ fn test_cast_timestamp_literal_to_tsql_unchanged() {
 #[test]
 fn test_ansi_date_literal_preserved_for_oracle() {
     // Control: Oracle supports the ANSI typed literal — it must be preserved.
+    // (Oracle also appends FROM DUAL to the FROM-less SELECT — PSQ-2848.)
     assert_transpile(
         "SELECT DATE '2023-01-01'",
-        "SELECT DATE '2023-01-01'",
+        "SELECT DATE '2023-01-01' FROM DUAL",
         Dialect::Postgres,
         Dialect::Oracle,
     );
@@ -1273,7 +1280,7 @@ fn test_validate_all_cast_bytea() {
             (Dialect::Materialize, "SELECT x::BYTEA"),
             (Dialect::Mysql, "SELECT CAST(x AS BLOB)"),
             (Dialect::Sqlite, "SELECT CAST(x AS BLOB)"),
-            (Dialect::Oracle, "SELECT CAST(x AS BLOB)"),
+            (Dialect::Oracle, "SELECT CAST(x AS BLOB) FROM DUAL"),
             (Dialect::Hive, "SELECT CAST(x AS BLOB)"),
             (Dialect::Doris, "SELECT CAST(x AS BLOB)"),
         ],
@@ -1307,7 +1314,7 @@ fn test_validate_all_ifnull_writes() {
             (Dialect::Presto, "SELECT COALESCE(x, y)"),
             (Dialect::Trino, "SELECT COALESCE(x, y)"),
             (Dialect::ClickHouse, "SELECT COALESCE(x, y)"),
-            (Dialect::Oracle, "SELECT COALESCE(x, y)"),
+            (Dialect::Oracle, "SELECT COALESCE(x, y) FROM DUAL"),
             // T-SQL family → ISNULL
             (Dialect::Tsql, "SELECT ISNULL(x, y)"),
             (Dialect::Fabric, "SELECT ISNULL(x, y)"),
@@ -1322,7 +1329,7 @@ fn test_validate_all_nvl_writes() {
         "SELECT NVL(x, y)",
         Dialect::Oracle,
         &[
-            (Dialect::Oracle, "SELECT NVL(x, y)"),
+            (Dialect::Oracle, "SELECT NVL(x, y) FROM DUAL"),
             (Dialect::Snowflake, "SELECT NVL(x, y)"),
             (Dialect::Postgres, "SELECT COALESCE(x, y)"),
             (Dialect::BigQuery, "SELECT COALESCE(x, y)"),
@@ -1382,7 +1389,7 @@ fn test_validate_all_now_writes() {
             (Dialect::Trino, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Athena, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::ClickHouse, "SELECT CURRENT_TIMESTAMP()"),
-            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP()"),
+            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP() FROM DUAL"),
             (Dialect::Exasol, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Teradata, "SELECT CURRENT_TIMESTAMP()"),
             // → GETDATE
@@ -1409,7 +1416,7 @@ fn test_validate_all_getdate_writes() {
             (Dialect::Snowflake, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Hive, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Presto, "SELECT CURRENT_TIMESTAMP()"),
-            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP()"),
+            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP() FROM DUAL"),
         ],
     );
 }
@@ -1438,7 +1445,7 @@ fn test_validate_all_substring_writes() {
             // SUBSTR dialects
             (Dialect::Mysql, "SELECT SUBSTR(x, 1, 3)"),
             (Dialect::Sqlite, "SELECT SUBSTR(x, 1, 3)"),
-            (Dialect::Oracle, "SELECT SUBSTR(x, 1, 3)"),
+            (Dialect::Oracle, "SELECT SUBSTR(x, 1, 3) FROM DUAL"),
             (Dialect::Hive, "SELECT SUBSTR(x, 1, 3)"),
             (Dialect::Spark, "SELECT SUBSTR(x, 1, 3)"),
             (Dialect::Databricks, "SELECT SUBSTR(x, 1, 3)"),
@@ -1466,7 +1473,7 @@ fn test_validate_all_len_writes() {
             (Dialect::Mysql, "SELECT LENGTH(x)"),
             (Dialect::Sqlite, "SELECT LENGTH(x)"),
             (Dialect::DuckDb, "SELECT LENGTH(x)"),
-            (Dialect::Oracle, "SELECT LENGTH(x)"),
+            (Dialect::Oracle, "SELECT LENGTH(x) FROM DUAL"),
             (Dialect::Hive, "SELECT LENGTH(x)"),
             (Dialect::Presto, "SELECT LENGTH(x)"),
             (Dialect::ClickHouse, "SELECT LENGTH(x)"),
@@ -1635,7 +1642,8 @@ fn test_mysql_identity() {
 #[test]
 fn test_oracle_identity() {
     let sqls = [
-        "SELECT 1",
+        // Oracle canonicalizes a FROM-less SELECT with `FROM DUAL` (PSQ-2848).
+        "SELECT 1 FROM DUAL",
         "SELECT * FROM t WHERE ROWNUM <= 10",
         "SELECT a, b FROM t ORDER BY a",
     ];

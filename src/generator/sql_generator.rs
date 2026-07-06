@@ -319,6 +319,14 @@ impl Generator {
                 self.write(" ");
                 self.gen_table_source(&from.source);
             }
+        } else if matches!(self.dialect, Some(Dialect::Oracle)) {
+            // Oracle 21c and earlier reject a FROM-less SELECT (ORA-00923). Emit
+            // `FROM DUAL` for portability — valid on every Oracle version. All
+            // FROM-less selects funnel through here (top-level statements, scalar
+            // subqueries, EXISTS, derived tables, and each set-operation branch),
+            // so nested cases are covered too. (PSQ-2848)
+            self.sep();
+            self.write_keyword("FROM DUAL");
         }
 
         for join in &sel.joins {
@@ -1713,10 +1721,17 @@ impl Generator {
     /// nested operand is fixed, and lowering a bare boolean literal to `1 = 1`
     /// / `1 = 0`. Expressions that are already predicates (comparisons,
     /// `IS NULL`, `IN`, `LIKE`, `BETWEEN`, `EXISTS`, …) are emitted unchanged.
-    /// Every non-T-SQL dialect delegates straight to `gen_expr`, so their
-    /// output is byte-for-byte identical.
+    ///
+    /// Oracle has the same restriction for a *bare boolean literal* (`WHERE 1`
+    /// and `WHERE TRUE` are not valid conditions), so it also lowers
+    /// `TRUE`/`FALSE` to `1 = 1` / `1 = 0`, recursing through the connectives —
+    /// but, unlike the T-SQL family, it does NOT wrap other bare scalars as
+    /// `<e> = 1` (PSQ-2848). Every other dialect delegates straight to
+    /// `gen_expr`, so their output is byte-for-byte identical.
     fn gen_condition(&mut self, e: &Expr) {
-        if !matches!(self.dialect, Some(d) if crate::dialects::is_tsql_family(d)) {
+        let is_tsql = matches!(self.dialect, Some(d) if crate::dialects::is_tsql_family(d));
+        let is_oracle = matches!(self.dialect, Some(Dialect::Oracle));
+        if !is_tsql && !is_oracle {
             self.gen_expr(e);
             return;
         }
@@ -1768,11 +1783,15 @@ impl Generator {
             | Expr::AllOp { .. } => self.gen_expr(e),
             // Bare boolean literal in a condition position → `1 = 1` / `1 = 0`.
             Expr::Boolean(b) => self.write(if *b { "1 = 1" } else { "1 = 0" }),
-            // Any other bare scalar (column, function, cast, scalar subquery,
-            // …) is a PostgreSQL boolean here; wrap it into a predicate.
+            // Any other bare scalar (column, function, cast, scalar subquery, …)
+            // is a PostgreSQL boolean here. SQL Server wraps it into a predicate
+            // (`<e> = 1`); Oracle leaves it unchanged, since the generator makes
+            // no assumption about non-literal Oracle expressions.
             _ => {
                 self.gen_expr(e);
-                self.write(" = 1");
+                if is_tsql {
+                    self.write(" = 1");
+                }
             }
         }
     }
@@ -1815,7 +1834,16 @@ impl Generator {
                 self.write("'");
             }
             Expr::Boolean(b) => {
-                if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                // SQL Server/Fabric have no boolean type and Oracle (<= 21c) has
+                // no boolean literal, so emit 1/0 for all three in operand and
+                // projection positions (e.g. `col = TRUE` -> `col = 1`,
+                // `SELECT TRUE` -> `SELECT 1`). Other dialects keep TRUE/FALSE.
+                // Bare booleans in a *condition* position are handled by
+                // `gen_condition`. (Oracle: PSQ-2848)
+                if matches!(
+                    self.dialect,
+                    Some(Dialect::Tsql) | Some(Dialect::Fabric) | Some(Dialect::Oracle)
+                ) {
                     self.write(if *b { "1" } else { "0" });
                 } else {
                     self.write(if *b { "TRUE" } else { "FALSE" });
