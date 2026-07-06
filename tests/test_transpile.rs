@@ -2444,6 +2444,191 @@ fn test_pg_to_tsql_extract_dow_still_datepart() {
     );
 }
 
+// ── PSQ-2848: portable Oracle generation (Oracle 21c and earlier) ───────────
+// Oracle <= 21c rejects FROM-less SELECT (ORA-00923) and boolean literals
+// (ORA-00904/00920). Emit `FROM DUAL` for FROM-less selects and lower booleans
+// to 1/0 (operand position) or 1 = 1 / 1 = 0 (bare condition position).
+
+#[test]
+fn test_pg_to_oracle_fromless_select_gets_dual() {
+    validate_with_dialect(
+        "SELECT 1",
+        "SELECT 1 FROM DUAL",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_scalar_subquery_gets_dual() {
+    validate_with_dialect(
+        "SELECT (SELECT 1) FROM t",
+        "SELECT (SELECT 1 FROM DUAL) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_nested_scalar_subquery_gets_dual() {
+    // Acceptance: FROM-less scalar subqueries render with FROM DUAL when nested.
+    validate_with_dialect(
+        "SELECT (SELECT (SELECT 1)) FROM t",
+        "SELECT (SELECT (SELECT 1 FROM DUAL) FROM DUAL) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_derived_fromless_select_gets_dual() {
+    validate_with_dialect(
+        "SELECT * FROM (SELECT 1) x",
+        "SELECT * FROM (SELECT 1 FROM DUAL) x",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_exists_fromless_select_gets_dual() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE EXISTS (SELECT 1)",
+        "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM DUAL)",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_setop_branches_each_get_dual() {
+    validate_with_dialect(
+        "SELECT 1 UNION SELECT 2",
+        "SELECT 1 FROM DUAL UNION SELECT 2 FROM DUAL",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_select_with_from_unchanged() {
+    // Control: a SELECT that already has a FROM must not gain a second source.
+    validate_with_dialect(
+        "SELECT a FROM t",
+        "SELECT a FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_oracle_identity_select_from_dual() {
+    // Control: an explicit FROM DUAL round-trips without duplication.
+    validate_with_dialect(
+        "SELECT 1 FROM DUAL",
+        "SELECT 1 FROM DUAL",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_boolean_operand_true() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE col = TRUE",
+        "SELECT * FROM t WHERE col = 1",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_boolean_operand_false() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE col = FALSE",
+        "SELECT * FROM t WHERE col = 0",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_boolean_projection_gets_dual() {
+    // Both changes at once: TRUE -> 1 in projection, plus FROM DUAL.
+    validate_with_dialect(
+        "SELECT TRUE",
+        "SELECT 1 FROM DUAL",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_bare_boolean_condition_true() {
+    // Bare boolean in condition position: `WHERE 1` is invalid Oracle, so 1 = 1.
+    validate_with_dialect(
+        "SELECT * FROM t WHERE TRUE",
+        "SELECT * FROM t WHERE 1 = 1",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_bare_boolean_condition_false() {
+    validate_with_dialect(
+        "SELECT * FROM t WHERE FALSE",
+        "SELECT * FROM t WHERE 1 = 0",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_oracle_bare_boolean_in_connective() {
+    // Bare boolean nested under a logical connective is lowered too.
+    validate_with_dialect(
+        "SELECT a FROM t WHERE TRUE AND x > 1",
+        "SELECT a FROM t WHERE 1 = 1 AND x > 1",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn test_pg_to_pg_fromless_select_unchanged() {
+    // Control: the generic (non-Oracle) path never appends FROM DUAL.
+    validate_with_dialect("SELECT 1", "SELECT 1", Dialect::Postgres, Dialect::Postgres);
+}
+
+#[test]
+fn test_pg_to_pg_boolean_unchanged() {
+    // Control: booleans stay TRUE/FALSE on Postgres.
+    validate_with_dialect(
+        "SELECT * FROM t WHERE col = TRUE",
+        "SELECT * FROM t WHERE col = TRUE",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn test_pg_to_tsql_fromless_select_no_dual() {
+    // Control: FROM DUAL is Oracle-only; T-SQL must not gain it.
+    validate_with_dialect("SELECT 1", "SELECT 1", Dialect::Postgres, Dialect::Tsql);
+}
+
+#[test]
+fn test_pg_to_tsql_boolean_operand_still_one() {
+    // Control: the CR-008/CR-018 T-SQL boolean path is untouched by PSQ-2848.
+    validate_with_dialect(
+        "SELECT * FROM t WHERE col = TRUE",
+        "SELECT * FROM t WHERE col = 1",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
 // ── Change 3: LIMIT/OFFSET → OFFSET/FETCH ──────────────────────────────────
 
 #[test]
