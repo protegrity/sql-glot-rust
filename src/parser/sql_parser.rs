@@ -2234,10 +2234,16 @@ impl Parser {
                 let token = self.advance().clone();
                 return Ok(Some((token.value, QuoteStyle::None)));
             }
-            // SQLite / MySQL / Snowflake accept a string literal as an alias
-            // (`AS 'Record Id'`). The alias is an identifier despite the
-            // quoting, so normalize to DoubleQuote. Only after an explicit AS -
-            // an implicit trailing string is concatenation in MySQL.
+            // SQLite / MySQL / Snowflake / T-SQL accept a string literal as an
+            // alias (`AS 'Record Id'`; T-SQL `SELECT 1 AS 'col'`). The alias is
+            // an identifier despite the quoting, so normalize to DoubleQuote and
+            // let the generator re-quote it in the target dialect's canonical
+            // style (double-quote / backtick / bracket) with proper escaping.
+            // Accepted for every dialect — intentionally lenient on input, like
+            // the TRUE/FALSE/NULL and DuckDB-keyword branches above; dialects
+            // that reject string-literal aliases on input still receive valid,
+            // correctly quoted output. Only after an explicit AS: an implicit
+            // trailing string is concatenation in MySQL, not an alias.
             if matches!(self.peek_type(), TokenType::String) {
                 let token = self.advance().clone();
                 return Ok(Some((token.value, QuoteStyle::DoubleQuote)));

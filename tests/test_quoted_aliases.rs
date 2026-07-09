@@ -216,3 +216,53 @@ fn test_string_literal_expression_not_treated_as_alias() {
     // A trailing string with no AS stays a string expression, never an alias.
     validate_identity(r#"SELECT 'a', 'b' FROM t"#, Dialect::Sqlite);
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Follow-up (#22): string-literal alias re-quoting across dialect families.
+// The alias normalizes to a quoted identifier, so the generator emits the
+// target dialect's canonical quote — bracket (T-SQL), double-quote
+// (Snowflake / PostgreSQL / Oracle), backtick (MySQL, covered above).
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_single_quoted_alias_tsql_normalizes_to_bracket() {
+    validate(
+        r#"SELECT 7 AS 'Mixed'"#,
+        r#"SELECT 7 AS [Mixed]"#,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn test_single_quoted_alias_snowflake_normalizes_to_double() {
+    validate(
+        r#"SELECT 7 AS 'Mixed'"#,
+        r#"SELECT 7 AS "Mixed""#,
+        Dialect::Snowflake,
+    );
+}
+
+#[test]
+fn test_single_quoted_alias_transpile_to_postgres() {
+    let result = transpile(r#"SELECT 7 AS 'Mixed'"#, Dialect::Sqlite, Dialect::Postgres).unwrap();
+    assert_eq!(result, r#"SELECT 7 AS "Mixed""#);
+}
+
+#[test]
+fn test_single_quoted_alias_transpile_to_tsql() {
+    let result = transpile(r#"SELECT 7 AS 'Mixed'"#, Dialect::Sqlite, Dialect::Tsql).unwrap();
+    assert_eq!(result, r#"SELECT 7 AS [Mixed]"#);
+}
+
+#[test]
+fn test_single_quoted_alias_transpile_to_oracle() {
+    // FROM-bearing query so the CR-021 `FROM DUAL` rewrite doesn't apply;
+    // keeps the assertion focused on alias re-quoting.
+    let result = transpile(
+        r#"SELECT record_id AS 'Record Id' FROM deals"#,
+        Dialect::Sqlite,
+        Dialect::Oracle,
+    )
+    .unwrap();
+    assert_eq!(result, r#"SELECT record_id AS "Record Id" FROM deals"#);
+}
