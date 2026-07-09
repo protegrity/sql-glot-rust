@@ -1218,6 +1218,31 @@ assert!(QuoteStyle::Backtick.is_quoted());
 assert!(!QuoteStyle::None.is_quoted());
 ```
 
+### String-Literal Aliases
+
+Some dialects accept a **string literal** as an alias after an explicit `AS`
+(`SELECT col AS 'Record Id'`) — notably SQLite, MySQL, Snowflake, and T-SQL
+(legacy syntax). The parser accepts this form for every dialect (it is lenient
+on input) and normalizes the alias to a **quoted identifier**, so the generator
+re-emits it in the target dialect's canonical quote style with embedded quotes
+escaped. The alias is treated as quoted, so its case is always preserved
+(never folded).
+
+```rust
+use sqlglot_rust::{transpile, Dialect};
+
+// SQLite string-literal alias → the target dialect's canonical quoted identifier
+assert_eq!(transpile("SELECT 7 AS 'Mixed'", Dialect::Sqlite, Dialect::Postgres).unwrap(),
+           r#"SELECT 7 AS "Mixed""#);   // double quote
+assert_eq!(transpile("SELECT 7 AS 'Mixed'", Dialect::Sqlite, Dialect::Mysql).unwrap(),
+           "SELECT 7 AS `Mixed`");      // backtick
+assert_eq!(transpile("SELECT 7 AS 'Mixed'", Dialect::Sqlite, Dialect::Tsql).unwrap(),
+           "SELECT 7 AS [Mixed]");      // bracket
+```
+
+> A trailing string with **no** `AS` is never treated as an alias (in MySQL,
+> adjacent string literals are concatenation).
+
 ---
 
 ## Dialect Enum
