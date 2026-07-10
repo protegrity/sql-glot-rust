@@ -1242,9 +1242,14 @@ fn cast_value(val: &Value, data_type: &DataType) -> Result<Value> {
             .to_f64()
             .map(Value::Float)
             .ok_or_else(|| SqlglotError::Internal(format!("Cannot cast {val:?} to float"))),
-        DataType::Varchar(_) | DataType::Char(_) | DataType::Text | DataType::String => {
-            Ok(Value::String(val.to_string_val()))
-        }
+        DataType::Varchar(_)
+        | DataType::Char(_)
+        | DataType::NChar(_)
+        | DataType::NVarchar(_)
+        | DataType::VarcharMax
+        | DataType::NvarcharMax
+        | DataType::Text
+        | DataType::String => Ok(Value::String(val.to_string_val())),
         DataType::Boolean => Ok(Value::Boolean(val.is_truthy())),
         _ => Ok(Value::String(val.to_string_val())),
     }

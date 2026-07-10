@@ -1560,6 +1560,39 @@ impl Generator {
                     None => {}
                 }
             }
+            DataType::NChar(len) => {
+                // National fixed-length char is spelled NCHAR only for the
+                // T-SQL family; elsewhere it degrades to CHAR.
+                let is_tsql = matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric));
+                self.write(if is_tsql { "NCHAR" } else { "CHAR" });
+                if let Some(n) = len {
+                    self.write(&format!("({n})"));
+                }
+            }
+            DataType::NVarchar(len) => {
+                let is_tsql = matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric));
+                self.write(if is_tsql { "NVARCHAR" } else { "VARCHAR" });
+                if let Some(n) = len {
+                    self.write(&format!("({n})"));
+                }
+            }
+            DataType::VarcharMax => {
+                // Large-object string: VARCHAR(MAX) for the T-SQL family, TEXT
+                // elsewhere. Preserves the full length instead of collapsing
+                // to the MSSQL CAST default of 30.
+                if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                    self.write("VARCHAR(MAX)");
+                } else {
+                    self.write("TEXT");
+                }
+            }
+            DataType::NvarcharMax => {
+                if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
+                    self.write("NVARCHAR(MAX)");
+                } else {
+                    self.write("TEXT");
+                }
+            }
             DataType::Boolean => self.write("BOOLEAN"),
             DataType::Date => self.write("DATE"),
             DataType::Time { precision } => {

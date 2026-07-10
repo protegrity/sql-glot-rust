@@ -2109,7 +2109,7 @@ fn test_validate_all_compound_query() {
             ),
             (
                 Dialect::Tsql,
-                "SELECT ISNULL(SUBSTRING(CAST(x AS VARCHAR), 1, 3), 'none') FROM t",
+                "SELECT ISNULL(SUBSTRING(CAST(x AS VARCHAR(MAX)), 1, 3), 'none') FROM t",
             ),
             (
                 Dialect::Oracle,

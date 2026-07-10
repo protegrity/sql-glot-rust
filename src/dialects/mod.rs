@@ -1203,7 +1203,9 @@ pub(crate) fn map_data_type(dt: DataType, target: Dialect) -> DataType {
     match (dt, target) {
         // ── T-SQL type mappings ─────────────────────────────────────────
         (DataType::Text, t) if is_tsql_family(t) => {
-            DataType::Varchar(None) // NVARCHAR(MAX) emitted by generator via Unknown
+            // TEXT is a large-object string; emit VARCHAR(MAX) so the value is
+            // not truncated to the MSSQL CAST default length of 30.
+            DataType::VarcharMax
         }
         (DataType::Boolean, t) if is_tsql_family(t) => DataType::Bit(None),
         (DataType::Bytea, t) if is_tsql_family(t) => DataType::Varbinary(None),
