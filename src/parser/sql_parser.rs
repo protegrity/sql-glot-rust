@@ -8686,38 +8686,46 @@ impl Parser {
                             }
                             "TRIM" => {
                                 let saved = self.pos;
-                                if self.check_keyword("LEADING")
-                                    || self.check_keyword("TRAILING")
-                                    || self.check_keyword("BOTH")
-                                {
+                                let trim_type = if self.check_keyword("LEADING") {
                                     self.advance();
-                                }
+                                    TrimType::Leading
+                                } else if self.check_keyword("TRAILING") {
+                                    self.advance();
+                                    TrimType::Trailing
+                                } else if self.check_keyword("BOTH") {
+                                    self.advance();
+                                    TrimType::Both
+                                } else {
+                                    TrimType::Both
+                                };
+                                // TRIM([LEADING|TRAILING|BOTH] FROM expr)
                                 if self.peek_type() == &TokenType::From {
                                     self.advance();
                                     let expr = self.parse_expr()?;
                                     self.expect(TokenType::RParen)?;
-                                    return Ok(Expr::Function {
-                                        name: name.clone(),
-                                        args: vec![expr],
-                                        distinct: false,
+                                    return Ok(Expr::TypedFunction {
+                                        func: TypedFunction::Trim {
+                                            expr: Box::new(expr),
+                                            trim_type,
+                                            trim_chars: None,
+                                        },
                                         filter: None,
                                         over: None,
-                                        order_by: Vec::new(),
-                                        within_group: false,
                                     });
                                 }
+                                // TRIM([LEADING|TRAILING|BOTH] chars FROM expr)
                                 let chars = self.parse_expr()?;
                                 if self.match_token(TokenType::From) {
                                     let expr = self.parse_expr()?;
                                     self.expect(TokenType::RParen)?;
-                                    return Ok(Expr::Function {
-                                        name: name.clone(),
-                                        args: vec![expr, chars],
-                                        distinct: false,
+                                    return Ok(Expr::TypedFunction {
+                                        func: TypedFunction::Trim {
+                                            expr: Box::new(expr),
+                                            trim_type,
+                                            trim_chars: Some(Box::new(chars)),
+                                        },
                                         filter: None,
                                         over: None,
-                                        order_by: Vec::new(),
-                                        within_group: false,
                                     });
                                 }
                                 self.pos = saved;
@@ -9071,24 +9079,30 @@ impl Parser {
                     // and `TRIM(expr [, chars])` (already covered by comma).
                     if upper == "TRIM" && self.peek_type() != &TokenType::RParen {
                         let saved = self.pos;
-                        if self.check_keyword("LEADING")
-                            || self.check_keyword("TRAILING")
-                            || self.check_keyword("BOTH")
-                        {
+                        let trim_type = if self.check_keyword("LEADING") {
                             self.advance();
-                        }
+                            TrimType::Leading
+                        } else if self.check_keyword("TRAILING") {
+                            self.advance();
+                            TrimType::Trailing
+                        } else if self.check_keyword("BOTH") {
+                            self.advance();
+                            TrimType::Both
+                        } else {
+                            TrimType::Both
+                        };
                         if self.peek_type() == &TokenType::From {
                             self.advance();
                             let expr = self.parse_expr()?;
                             self.expect(TokenType::RParen)?;
-                            return Ok(Expr::Function {
-                                name: v,
-                                args: vec![expr],
-                                distinct: false,
+                            return Ok(Expr::TypedFunction {
+                                func: TypedFunction::Trim {
+                                    expr: Box::new(expr),
+                                    trim_type,
+                                    trim_chars: None,
+                                },
                                 filter: None,
                                 over: None,
-                                order_by: Vec::new(),
-                                within_group: false,
                             });
                         }
                         // chars FROM expr
@@ -9096,14 +9110,14 @@ impl Parser {
                         if self.match_token(TokenType::From) {
                             let expr = self.parse_expr()?;
                             self.expect(TokenType::RParen)?;
-                            return Ok(Expr::Function {
-                                name: v,
-                                args: vec![expr, chars],
-                                distinct: false,
+                            return Ok(Expr::TypedFunction {
+                                func: TypedFunction::Trim {
+                                    expr: Box::new(expr),
+                                    trim_type,
+                                    trim_chars: Some(Box::new(chars)),
+                                },
                                 filter: None,
                                 over: None,
-                                order_by: Vec::new(),
-                                within_group: false,
                             });
                         }
                         // Plain comma list — fall back.
@@ -9727,10 +9741,11 @@ impl Parser {
             "TRIM" => {
                 let mut it = args.into_iter();
                 let expr = it.next()?;
+                let trim_chars = it.next().map(Box::new);
                 TypedFunction::Trim {
                     expr: Box::new(expr),
                     trim_type: TrimType::Both,
-                    trim_chars: None,
+                    trim_chars,
                 }
             }
             "LTRIM" => {

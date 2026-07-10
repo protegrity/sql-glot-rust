@@ -1431,6 +1431,157 @@ fn test_typed_trim_identity() {
     validate_identity("SELECT TRIM(name) FROM t");
 }
 
+// ── CR-024: extended TRIM([LEADING|TRAILING|BOTH] [chars] FROM expr) ──────────
+// The ANSI/PostgreSQL extended TRIM grammar was transpiled to an invalid 2-arg
+// comma call `TRIM(expr, chars)` with the direction silently dropped. It must
+// route into a TypedFunction::Trim and emit valid, direction-preserving SQL.
+
+#[test]
+fn cr024_pg_to_tsql_trim_both() {
+    // Reported case: BOTH + chars → ANSI `chars FROM expr` (SQL Server 2022).
+    validate_with_dialect(
+        "SELECT TRIM(BOTH ' ' FROM '  hi  ')",
+        "SELECT TRIM(' ' FROM '  hi  ')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT TRIM(BOTH 'x' FROM 'xxhixx')",
+        "SELECT TRIM('x' FROM 'xxhixx')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr024_pg_to_tsql_trim_direction_preserved() {
+    validate_with_dialect(
+        "SELECT TRIM(LEADING ' ' FROM '  hi  ')",
+        "SELECT TRIM(LEADING ' ' FROM '  hi  ')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT TRIM(TRAILING ' ' FROM '  hi  ')",
+        "SELECT TRIM(TRAILING ' ' FROM '  hi  ')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr024_pg_to_tsql_trim_direction_no_chars_keeps_from() {
+    // Missing-FROM bug: a direction keyword with no chars still requires FROM.
+    validate_with_dialect(
+        "SELECT TRIM(LEADING FROM '  hi  ')",
+        "SELECT TRIM(LEADING FROM '  hi  ')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr024_pg_to_tsql_trim_comma_form_preserves_chars() {
+    // Comma form `TRIM(expr, chars)` must keep chars (previously dropped).
+    validate_with_dialect(
+        "SELECT TRIM(name, 'x') FROM t",
+        "SELECT TRIM('x' FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr024_ltrim_rtrim_emit_valid_ansi_from() {
+    // Latent bug: LTRIM/RTRIM emitted `TRIM(LEADING x)` (missing FROM = invalid).
+    validate_with_dialect(
+        "SELECT LTRIM(name) FROM t",
+        "SELECT TRIM(LEADING FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT RTRIM(name) FROM t",
+        "SELECT TRIM(TRAILING FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr024_pg_to_snowflake_trim_comma_form() {
+    // Comma-form dialects must not regress to the unsupported FROM grammar;
+    // direction is preserved via LTRIM/RTRIM with the chars as a 2nd argument.
+    validate_with_dialect(
+        "SELECT TRIM(BOTH ' ' FROM '  hi  ')",
+        "SELECT TRIM('  hi  ', ' ')",
+        Dialect::Postgres,
+        Dialect::Snowflake,
+    );
+    validate_with_dialect(
+        "SELECT TRIM(LEADING ' ' FROM '  hi  ')",
+        "SELECT LTRIM('  hi  ', ' ')",
+        Dialect::Postgres,
+        Dialect::Snowflake,
+    );
+    validate_with_dialect(
+        "SELECT TRIM(TRAILING ' ' FROM '  hi  ')",
+        "SELECT RTRIM('  hi  ', ' ')",
+        Dialect::Postgres,
+        Dialect::Snowflake,
+    );
+}
+
+#[test]
+fn cr024_snowflake_trim_comma_form_roundtrip() {
+    validate_with_dialect(
+        "SELECT TRIM(name, 'x') FROM t",
+        "SELECT TRIM(name, 'x') FROM t",
+        Dialect::Snowflake,
+        Dialect::Snowflake,
+    );
+    validate_with_dialect(
+        "SELECT LTRIM(name) FROM t",
+        "SELECT LTRIM(name) FROM t",
+        Dialect::Snowflake,
+        Dialect::Snowflake,
+    );
+}
+
+#[test]
+fn cr024_ansi_trim_roundtrip_controls() {
+    // ANSI FROM-form round-trips unchanged on PostgreSQL, Oracle, MySQL.
+    validate_with_dialect(
+        "SELECT TRIM(LEADING ' ' FROM name) FROM t",
+        "SELECT TRIM(LEADING ' ' FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT TRIM(LEADING ' ' FROM name) FROM t",
+        "SELECT TRIM(LEADING ' ' FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    validate_with_dialect(
+        "SELECT TRIM(BOTH ' ' FROM name) FROM t",
+        "SELECT TRIM(' ' FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Mysql,
+    );
+}
+
+#[test]
+fn cr024_pg_to_tsql_trim_single_arg_control() {
+    // Single-arg form was always correct; it must remain unchanged.
+    validate_with_dialect(
+        "SELECT TRIM('  hi  ')",
+        "SELECT TRIM('  hi  ')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
 #[test]
 fn test_typed_length_cross_dialect() {
     validate_with_dialect(
