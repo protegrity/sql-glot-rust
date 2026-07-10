@@ -1867,6 +1867,16 @@ pub enum DataType {
     String,
     Binary(Option<u32>),
     Varbinary(Option<u32>),
+    /// National fixed-length character type: `NCHAR(n)`. T-SQL `NCHAR` has no
+    /// `MAX` form, so a plain length is exact.
+    NChar(Option<u32>),
+    /// National variable-length character type: `NVARCHAR(n)`.
+    NVarchar(Option<u32>),
+    /// `VARCHAR(MAX)` — a large-object string, distinct from bare `VARCHAR`
+    /// (`Varchar(None)`) which carries no explicit length.
+    VarcharMax,
+    /// `NVARCHAR(MAX)` — a national large-object string.
+    NvarcharMax,
 
     // Boolean
     Boolean,

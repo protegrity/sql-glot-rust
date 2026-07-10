@@ -5497,8 +5497,12 @@ impl Parser {
             }
             TokenType::Varchar => {
                 self.advance();
-                let len = self.parse_single_type_param()?;
-                Ok(DataType::Varchar(len))
+                let (is_max, len) = self.parse_len_or_max()?;
+                Ok(if is_max {
+                    DataType::VarcharMax
+                } else {
+                    DataType::Varchar(len)
+                })
             }
             TokenType::Char => {
                 self.advance();
@@ -5653,6 +5657,20 @@ impl Parser {
                 self.advance();
                 match name.as_str() {
                     "STRING" => Ok(DataType::String),
+                    "NCHAR" => {
+                        // T-SQL national fixed-length char. NCHAR has no MAX
+                        // form, so a plain length is exact.
+                        let len = self.parse_single_type_param()?;
+                        Ok(DataType::NChar(len))
+                    }
+                    "NVARCHAR" => {
+                        let (is_max, len) = self.parse_len_or_max()?;
+                        Ok(if is_max {
+                            DataType::NvarcharMax
+                        } else {
+                            DataType::NVarchar(len)
+                        })
+                    }
                     "BINARY" => {
                         let len = self.parse_single_type_param()?;
                         Ok(DataType::Binary(len))
@@ -5783,6 +5801,27 @@ impl Parser {
             Ok(n)
         } else {
             Ok(None)
+        }
+    }
+
+    /// Parse an optional `(...)` length parameter, distinguishing the T-SQL
+    /// `MAX` sentinel from a numeric length and from an absent parameter.
+    /// Returns `(is_max, length)`: `(true, None)` for `(MAX)`, `(false, n)`
+    /// for `(n)`, and `(false, None)` when no parameter is present. Unlike
+    /// [`Self::parse_single_type_param`], this does not conflate `(MAX)` with
+    /// the bare form, so callers can preserve `VARCHAR(MAX)` / `NVARCHAR(MAX)`.
+    fn parse_len_or_max(&mut self) -> Result<(bool, Option<u32>)> {
+        if self.match_token(TokenType::LParen) {
+            if self.check_keyword("MAX") {
+                self.advance(); // consume MAX
+                self.expect(TokenType::RParen)?;
+                return Ok((true, None));
+            }
+            let n: Option<u32> = self.expect(TokenType::Number)?.value.parse().ok();
+            self.expect(TokenType::RParen)?;
+            Ok((false, n))
+        } else {
+            Ok((false, None))
         }
     }
 

@@ -1090,7 +1090,14 @@ fn common_type(types: &[&DataType]) -> Option<DataType> {
 fn is_string_type(dt: &DataType) -> bool {
     matches!(
         dt,
-        DataType::Varchar(_) | DataType::Char(_) | DataType::Text | DataType::String
+        DataType::Varchar(_)
+            | DataType::Char(_)
+            | DataType::NChar(_)
+            | DataType::NVarchar(_)
+            | DataType::VarcharMax
+            | DataType::NvarcharMax
+            | DataType::Text
+            | DataType::String
     )
 }
 

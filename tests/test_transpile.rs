@@ -2656,9 +2656,12 @@ fn test_pg_to_tsql_limit_offset_no_order_by() {
 
 #[test]
 fn test_pg_to_tsql_text_type() {
+    // PostgreSQL TEXT is a large-object string → VARCHAR(MAX) (CR-023).
+    // Previously emitted a bare VARCHAR, which MSSQL treats as VARCHAR(30)
+    // in a CAST, silently truncating the value.
     validate_with_dialect(
         "SELECT CAST(x AS TEXT) FROM t",
-        "SELECT CAST(x AS VARCHAR) FROM t",
+        "SELECT CAST(x AS VARCHAR(MAX)) FROM t",
         Dialect::Postgres,
         Dialect::Tsql,
     );
@@ -3195,6 +3198,144 @@ fn cr019_control_other_operators_untouched() {
         "SELECT a * b FROM t",
         "SELECT a * b FROM t",
         Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-023 (PSQ-3005): T-SQL NCHAR / NVARCHAR length and VARCHAR(MAX) /
+// NVARCHAR(MAX) must round-trip. Previously the length / MAX modifier was
+// dropped, so MSSQL applied its CAST default length of 30 (padding NCHAR,
+// truncating VARCHAR/NVARCHAR) — silent data corruption.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cr023_nchar_length_preserved() {
+    validate_with_dialect(
+        "SELECT CAST(x AS NCHAR(10)) FROM t",
+        "SELECT CAST(x AS NCHAR(10)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr023_nchar_small_length_preserved() {
+    // Disproves the reported "3x padding" theory: the length is preserved
+    // verbatim, not multiplied.
+    validate_with_dialect(
+        "SELECT CAST(x AS NCHAR(2)) FROM t",
+        "SELECT CAST(x AS NCHAR(2)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr023_nvarchar_length_preserved() {
+    validate_with_dialect(
+        "SELECT CAST(x AS NVARCHAR(10)) FROM t",
+        "SELECT CAST(x AS NVARCHAR(10)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr023_varchar_max_roundtrip() {
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR(MAX)) FROM t",
+        "SELECT CAST(x AS VARCHAR(MAX)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr023_nvarchar_max_roundtrip() {
+    validate_with_dialect(
+        "SELECT CAST(x AS NVARCHAR(MAX)) FROM t",
+        "SELECT CAST(x AS NVARCHAR(MAX)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr023_pg_text_to_tsql_varchar_max() {
+    // PostgreSQL TEXT is a large-object string; it must map to VARCHAR(MAX),
+    // not a bare VARCHAR (which MSSQL treats as VARCHAR(30) in a CAST).
+    validate_with_dialect(
+        "SELECT CAST(x AS TEXT) FROM t",
+        "SELECT CAST(x AS VARCHAR(MAX)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Controls: finite CHAR / VARCHAR and VARBINARY(MAX) unchanged ─────────────
+
+#[test]
+fn cr023_control_char_length_preserved() {
+    validate_with_dialect(
+        "SELECT CAST(x AS CHAR(10)) FROM t",
+        "SELECT CAST(x AS CHAR(10)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr023_control_varchar_finite_preserved() {
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR(100)) FROM t",
+        "SELECT CAST(x AS VARCHAR(100)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr023_control_varbinary_max_preserved() {
+    // CR-008 behaviour must be preserved: VARBINARY(MAX) still round-trips.
+    validate_with_dialect(
+        "SELECT CAST(x AS VARBINARY(MAX)) FROM t",
+        "SELECT CAST(x AS VARBINARY(MAX)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Controls: national types degrade to non-national on PostgreSQL ───────────
+
+#[test]
+fn cr023_nchar_to_postgres_char() {
+    // National → non-national mapping; PostgreSQL emits the `::` cast form.
+    validate_with_dialect(
+        "SELECT CAST(x AS NCHAR(10)) FROM t",
+        "SELECT x::CHAR(10) FROM t",
+        Dialect::Tsql,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr023_nvarchar_max_to_postgres_text() {
+    validate_with_dialect(
+        "SELECT CAST(x AS NVARCHAR(MAX)) FROM t",
+        "SELECT x::TEXT FROM t",
+        Dialect::Tsql,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr023_tsql_identity_nvarchar_max() {
+    // Same-dialect round-trip (parse T-SQL → generate T-SQL).
+    validate_with_dialect(
+        "SELECT CAST(x AS NVARCHAR(MAX)) FROM t",
+        "SELECT CAST(x AS NVARCHAR(MAX)) FROM t",
+        Dialect::Tsql,
         Dialect::Tsql,
     );
 }
