@@ -2886,11 +2886,27 @@ impl Generator {
                         self.gen_expr(chars);
                     }
                     self.write(")");
+                } else if is_tsql && trim_chars.is_none() {
+                    // T-SQL (SQL Server / Fabric) requires a character set when a
+                    // direction keyword is present: `TRIM(LEADING FROM x)` is
+                    // rejected (Msg 156, "Incorrect syntax near 'FROM'"). With no
+                    // trim characters, express the leading/trailing space-trim via
+                    // the native LTRIM / RTRIM functions; BOTH with no chars is a
+                    // bare TRIM(x). (CR-025)
+                    let fname = match trim_type {
+                        TrimType::Leading => "LTRIM(",
+                        TrimType::Trailing => "RTRIM(",
+                        TrimType::Both => "TRIM(",
+                    };
+                    self.write_keyword(fname);
+                    self.gen_expr(expr);
+                    self.write(")");
                 } else {
-                    // ANSI / FROM form (PostgreSQL, Oracle, MySQL, T-SQL 2022,
-                    // Spark, Trino, ClickHouse, Redshift, …). FROM is required
-                    // whenever a direction keyword is present OR a character set
-                    // is given; a bare `TRIM(expr)` is emitted otherwise.
+                    // ANSI / FROM form (PostgreSQL, Oracle, MySQL, T-SQL 2022 when
+                    // trim characters are supplied, Spark, Trino, ClickHouse,
+                    // Redshift, …). FROM is required whenever a direction keyword
+                    // is present OR a character set is given; a bare `TRIM(expr)`
+                    // is emitted otherwise.
                     self.write_keyword("TRIM(");
                     match trim_type {
                         TrimType::Leading => self.write_keyword("LEADING "),
