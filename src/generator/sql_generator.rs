@@ -2858,19 +2858,56 @@ impl Generator {
                 trim_type,
                 trim_chars,
             } => {
-                self.write_keyword("TRIM(");
-                match trim_type {
-                    TrimType::Leading => self.write_keyword("LEADING "),
-                    TrimType::Trailing => self.write_keyword("TRAILING "),
-                    TrimType::Both => {} // BOTH is default
+                // Dialects without the ANSI `TRIM([LEADING|TRAILING] chars FROM
+                // expr)` grammar express direction via LTRIM/RTRIM and take the
+                // trim characters as an optional second argument.
+                let comma_form = matches!(
+                    dialect,
+                    Some(Dialect::Snowflake)
+                        | Some(Dialect::BigQuery)
+                        | Some(Dialect::Sqlite)
+                        | Some(Dialect::DuckDb)
+                );
+                // Hive proper supports only single-argument TRIM/LTRIM/RTRIM: no
+                // FROM grammar and no custom trim characters.
+                let hive_only = matches!(dialect, Some(Dialect::Hive));
+                if comma_form || hive_only {
+                    let fname = match trim_type {
+                        TrimType::Leading => "LTRIM(",
+                        TrimType::Trailing => "RTRIM(",
+                        TrimType::Both => "TRIM(",
+                    };
+                    self.write_keyword(fname);
+                    self.gen_expr(expr);
+                    // Hive has no way to express a custom trim character set, so
+                    // it is dropped (best effort); comma-form dialects keep it.
+                    if !hive_only && let Some(chars) = trim_chars {
+                        self.write(", ");
+                        self.gen_expr(chars);
+                    }
+                    self.write(")");
+                } else {
+                    // ANSI / FROM form (PostgreSQL, Oracle, MySQL, T-SQL 2022,
+                    // Spark, Trino, ClickHouse, Redshift, …). FROM is required
+                    // whenever a direction keyword is present OR a character set
+                    // is given; a bare `TRIM(expr)` is emitted otherwise.
+                    self.write_keyword("TRIM(");
+                    match trim_type {
+                        TrimType::Leading => self.write_keyword("LEADING "),
+                        TrimType::Trailing => self.write_keyword("TRAILING "),
+                        TrimType::Both => {} // BOTH is the default
+                    }
+                    let needs_from = trim_chars.is_some() || !matches!(trim_type, TrimType::Both);
+                    if let Some(chars) = trim_chars {
+                        self.gen_expr(chars);
+                        self.write(" ");
+                    }
+                    if needs_from {
+                        self.write_keyword("FROM ");
+                    }
+                    self.gen_expr(expr);
+                    self.write(")");
                 }
-                if let Some(chars) = trim_chars {
-                    self.gen_expr(chars);
-                    self.write(" ");
-                    self.write_keyword("FROM ");
-                }
-                self.gen_expr(expr);
-                self.write(")");
             }
             TypedFunction::Substring {
                 expr,
