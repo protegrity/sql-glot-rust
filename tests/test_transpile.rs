@@ -1470,11 +1470,12 @@ fn cr024_pg_to_tsql_trim_direction_preserved() {
 }
 
 #[test]
-fn cr024_pg_to_tsql_trim_direction_no_chars_keeps_from() {
-    // Missing-FROM bug: a direction keyword with no chars still requires FROM.
+fn cr025_pg_to_tsql_trim_direction_no_chars_native_ltrim() {
+    // CR-025: T-SQL rejects a direction keyword with no characters
+    // (`TRIM(LEADING FROM x)` -> Msg 156). Emit the native LTRIM instead.
     validate_with_dialect(
         "SELECT TRIM(LEADING FROM '  hi  ')",
-        "SELECT TRIM(LEADING FROM '  hi  ')",
+        "SELECT LTRIM('  hi  ')",
         Dialect::Postgres,
         Dialect::Tsql,
     );
@@ -1492,19 +1493,41 @@ fn cr024_pg_to_tsql_trim_comma_form_preserves_chars() {
 }
 
 #[test]
-fn cr024_ltrim_rtrim_emit_valid_ansi_from() {
-    // Latent bug: LTRIM/RTRIM emitted `TRIM(LEADING x)` (missing FROM = invalid).
+fn cr025_ltrim_rtrim_native_tsql() {
+    // CR-025: PostgreSQL LTRIM/RTRIM map to native T-SQL LTRIM/RTRIM. The
+    // earlier `TRIM(LEADING FROM x)` form is rejected by SQL Server (Msg 156).
     validate_with_dialect(
         "SELECT LTRIM(name) FROM t",
-        "SELECT TRIM(LEADING FROM name) FROM t",
+        "SELECT LTRIM(name) FROM t",
         Dialect::Postgres,
         Dialect::Tsql,
     );
     validate_with_dialect(
         "SELECT RTRIM(name) FROM t",
-        "SELECT TRIM(TRAILING FROM name) FROM t",
+        "SELECT RTRIM(name) FROM t",
         Dialect::Postgres,
         Dialect::Tsql,
+    );
+    // Control: with a character set the ANSI FROM form is still used (valid on
+    // SQL Server 2022), and BOTH with no chars is a bare TRIM.
+    validate_with_dialect(
+        "SELECT TRIM(LEADING ' ' FROM name) FROM t",
+        "SELECT TRIM(LEADING ' ' FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT TRIM('  hi  ')",
+        "SELECT TRIM('  hi  ')",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    // Other ANSI targets keep the FROM form (valid there).
+    validate_with_dialect(
+        "SELECT TRIM(LEADING FROM name) FROM t",
+        "SELECT TRIM(LEADING FROM name) FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
     );
 }
 
