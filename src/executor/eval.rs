@@ -1248,6 +1248,8 @@ fn cast_value(val: &Value, data_type: &DataType) -> Result<Value> {
         | DataType::NVarchar(_)
         | DataType::VarcharMax
         | DataType::NvarcharMax
+        | DataType::Varchar2(_)
+        | DataType::NVarchar2(_)
         | DataType::Text
         | DataType::String => Ok(Value::String(val.to_string_val())),
         DataType::Boolean => Ok(Value::Boolean(val.is_truthy())),

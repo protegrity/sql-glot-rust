@@ -5671,6 +5671,18 @@ impl Parser {
                             DataType::NVarchar(len)
                         })
                     }
+                    "VARCHAR2" => {
+                        // Oracle's canonical variable-length string. The
+                        // length (and optional CHAR/BYTE qualifier) MUST be
+                        // preserved — Oracle rejects a bare `VARCHAR2` in a
+                        // CAST (ORA-00906), the PSQ-3201 failure.
+                        let len = self.parse_oracle_str_len()?;
+                        Ok(DataType::Varchar2(len))
+                    }
+                    "NVARCHAR2" => {
+                        let len = self.parse_oracle_str_len()?;
+                        Ok(DataType::NVarchar2(len))
+                    }
                     "BINARY" => {
                         let len = self.parse_single_type_param()?;
                         Ok(DataType::Binary(len))
@@ -5822,6 +5834,27 @@ impl Parser {
             Ok((false, n))
         } else {
             Ok((false, None))
+        }
+    }
+
+    /// Parse an optional Oracle string-length parameter: `(n)` or
+    /// `(n CHAR)` / `(n BYTE)`. The numeric length is preserved; the optional
+    /// `CHAR`/`BYTE` length-semantics qualifier is tolerated (and dropped, as
+    /// the AST models length as a plain count). Oracle requires the length on
+    /// `VARCHAR2`/`NVARCHAR2` in a CAST, so — unlike the generic ClickHouse
+    /// parameterized-type swallow that discards it — it must be captured
+    /// (PSQ-3201).
+    fn parse_oracle_str_len(&mut self) -> Result<Option<u32>> {
+        if self.match_token(TokenType::LParen) {
+            let n: Option<u32> = self.expect(TokenType::Number)?.value.parse().ok();
+            // Optional Oracle CHAR / BYTE length-semantics qualifier.
+            if matches!(self.peek().value.to_uppercase().as_str(), "CHAR" | "BYTE") {
+                self.advance();
+            }
+            self.expect(TokenType::RParen)?;
+            Ok(n)
+        } else {
+            Ok(None)
         }
     }
 
