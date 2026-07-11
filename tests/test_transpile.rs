@@ -3513,3 +3513,123 @@ fn cr023_tsql_identity_nvarchar_max() {
         Dialect::Tsql,
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-026 (PSQ-3201): Oracle VARCHAR2 / NVARCHAR2 length must round-trip.
+// Previously the length was dropped, so `CAST(x AS VARCHAR2(10))` transpiled to
+// a bare `CAST(x AS VARCHAR2)`, which Oracle rejects with ORA-00906 (a length
+// is mandatory) — the query failed with SQL_ERROR through the gateway. CR-023
+// fixed the same class for the T-SQL family but scoped Oracle out; this closes
+// the Oracle gap.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cr026_varchar2_length_preserved() {
+    // The exact PSQ-3201 repro: a PG→Oracle cast must keep the length.
+    validate_with_dialect(
+        "SELECT CAST(123 AS VARCHAR2(10)) FROM dual",
+        "SELECT CAST(123 AS VARCHAR2(10)) FROM dual",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr026_varchar2_small_length_preserved() {
+    // The length is preserved verbatim, not defaulted or dropped.
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR2(4)) FROM t",
+        "SELECT CAST(x AS VARCHAR2(4)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr026_nvarchar2_length_preserved() {
+    validate_with_dialect(
+        "SELECT CAST(x AS NVARCHAR2(20)) FROM t",
+        "SELECT CAST(x AS NVARCHAR2(20)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr026_varchar2_char_qualifier_length_preserved() {
+    // Oracle `VARCHAR2(n CHAR)` — the numeric length is preserved; the
+    // CHAR length-semantics qualifier is tolerated (dropped).
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR2(10 CHAR)) FROM t",
+        "SELECT CAST(x AS VARCHAR2(10)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr026_varchar2_byte_qualifier_length_preserved() {
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR2(10 BYTE)) FROM t",
+        "SELECT CAST(x AS VARCHAR2(10)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr026_oracle_identity_varchar2() {
+    // Same-dialect round-trip (parse Oracle → generate Oracle).
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR2(10)) FROM t",
+        "SELECT CAST(x AS VARCHAR2(10)) FROM t",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+// ── Controls: VARCHAR2 / NVARCHAR2 degrade to portable VARCHAR off Oracle ─────
+
+#[test]
+fn cr026_varchar2_to_postgres_varchar() {
+    // PostgreSQL has no VARCHAR2; it degrades to VARCHAR with the length kept
+    // (PostgreSQL emits the `::` cast form).
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR2(10)) FROM t",
+        "SELECT x::VARCHAR(10) FROM t",
+        Dialect::Oracle,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr026_nvarchar2_to_postgres_varchar() {
+    validate_with_dialect(
+        "SELECT CAST(x AS NVARCHAR2(20)) FROM t",
+        "SELECT x::VARCHAR(20) FROM t",
+        Dialect::Oracle,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr026_nvarchar2_to_tsql_nvarchar() {
+    // National → national mapping onto the T-SQL family.
+    validate_with_dialect(
+        "SELECT CAST(x AS NVARCHAR2(20)) FROM t",
+        "SELECT CAST(x AS NVARCHAR(20)) FROM t",
+        Dialect::Oracle,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr026_control_varchar_finite_preserved() {
+    // Plain VARCHAR(n) is unaffected — Oracle accepts it verbatim.
+    validate_with_dialect(
+        "SELECT CAST(x AS VARCHAR(100)) FROM t",
+        "SELECT CAST(x AS VARCHAR(100)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}

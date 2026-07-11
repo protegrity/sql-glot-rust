@@ -1593,6 +1593,27 @@ impl Generator {
                     self.write("TEXT");
                 }
             }
+            DataType::Varchar2(len) => {
+                // Oracle's canonical variable-length string. Spelled VARCHAR2
+                // only for Oracle; every other dialect uses portable VARCHAR.
+                let is_oracle = matches!(self.dialect, Some(Dialect::Oracle));
+                self.write(if is_oracle { "VARCHAR2" } else { "VARCHAR" });
+                if let Some(n) = len {
+                    self.write(&format!("({n})"));
+                }
+            }
+            DataType::NVarchar2(len) => {
+                // Oracle national variable-length string. Oracle → NVARCHAR2;
+                // T-SQL family → NVARCHAR; everything else → VARCHAR.
+                match self.dialect {
+                    Some(Dialect::Oracle) => self.write("NVARCHAR2"),
+                    Some(Dialect::Tsql) | Some(Dialect::Fabric) => self.write("NVARCHAR"),
+                    _ => self.write("VARCHAR"),
+                }
+                if let Some(n) = len {
+                    self.write(&format!("({n})"));
+                }
+            }
             DataType::Boolean => self.write("BOOLEAN"),
             DataType::Date => self.write("DATE"),
             DataType::Time { precision } => {

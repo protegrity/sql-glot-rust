@@ -1877,6 +1877,14 @@ pub enum DataType {
     VarcharMax,
     /// `NVARCHAR(MAX)` — a national large-object string.
     NvarcharMax,
+    /// Oracle variable-length string: `VARCHAR2(n)`. Oracle's canonical string
+    /// type; distinct from [`DataType::Varchar`] so the transpiler can preserve
+    /// the length and round-trip Oracle. A `CAST` to a bare `VARCHAR2` (no
+    /// length) is invalid Oracle SQL (ORA-00906), so the length must never be
+    /// dropped.
+    Varchar2(Option<u32>),
+    /// Oracle national variable-length string: `NVARCHAR2(n)`.
+    NVarchar2(Option<u32>),
 
     // Boolean
     Boolean,

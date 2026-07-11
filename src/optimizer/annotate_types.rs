@@ -1096,6 +1096,8 @@ fn is_string_type(dt: &DataType) -> bool {
             | DataType::NVarchar(_)
             | DataType::VarcharMax
             | DataType::NvarcharMax
+            | DataType::Varchar2(_)
+            | DataType::NVarchar2(_)
             | DataType::Text
             | DataType::String
     )
