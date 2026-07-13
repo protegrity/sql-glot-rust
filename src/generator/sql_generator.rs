@@ -27,6 +27,10 @@ impl Generator {
     }
 
     /// Create a generator that produces formatted SQL.
+    #[deprecated(
+        since = "0.10.17",
+        note = "use `with_dialect(dialect).generate_pretty(stmt)` to format for a target dialect"
+    )]
     #[must_use]
     pub fn pretty() -> Self {
         Self {
@@ -51,6 +55,15 @@ impl Generator {
     /// Generate SQL from a statement.
     #[must_use]
     pub fn generate(&mut self, statement: &Statement) -> String {
+        self.output.clear();
+        self.gen_statement(statement);
+        self.output.clone()
+    }
+
+    /// Generate formatted SQL (newlines and indentation) from a statement.
+    #[must_use]
+    pub fn generate_pretty(&mut self, statement: &Statement) -> String {
+        self.pretty = true;
         self.output.clear();
         self.gen_statement(statement);
         self.output.clone()
@@ -3790,8 +3803,8 @@ mod tests {
 
     fn pretty_print(sql: &str) -> String {
         let stmt = Parser::new(sql).unwrap().parse_statement().unwrap();
-        let mut g = Generator::pretty();
-        g.generate(&stmt)
+        let mut g = Generator::with_dialect(Dialect::Ansi);
+        g.generate_pretty(&stmt)
     }
 
     #[test]

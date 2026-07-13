@@ -1830,6 +1830,13 @@ int main(void) {
     char *json = sqlglot_parse("SELECT a FROM t", "ansi");
     if (json) {
         printf("AST: %s\n", json);
+
+        char *pretty = sqlglot_generate_pretty(json, "ansi");
+        if (pretty) {
+            printf("formatted: %s\n", pretty);
+            sqlglot_free(pretty);
+        }
+
         sqlglot_free(json);
     }
 

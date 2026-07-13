@@ -145,7 +145,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlglot-rust = "0.10.14"
+sqlglot-rust = "0.10.17"
 ```
 
 ### Parse and generate SQL
@@ -358,6 +358,7 @@ const char *sqlglot_version(void);
 char *sqlglot_parse(const char *sql, const char *dialect);
 char *sqlglot_transpile(const char *sql, const char *from_dialect, const char *to_dialect);
 char *sqlglot_generate(const char *ast_json, const char *dialect);
+char *sqlglot_generate_pretty(const char *ast_json, const char *dialect);
 void  sqlglot_free(char *ptr);   /* must be called on every non-NULL return */
 ```
 
