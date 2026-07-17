@@ -646,6 +646,14 @@ pub fn transform(statement: &Statement, from: Dialect, to: Dialect) -> Statement
     }
     let mut stmt = statement.clone();
     transform_statement(&mut stmt, to);
+    // CR-027: for the T-SQL family, rewrite any correlated `GROUP BY` whose
+    // key list is a pure outer reference (SQL Server code 164). This walks the
+    // whole statement tree — including subqueries — because the offending
+    // grouping is typically nested inside a correlated scalar subquery that the
+    // shallow `transform_statement` pass never visits.
+    if is_tsql_family(to) {
+        fix_group_by_outer_refs_stmt(&mut stmt);
+    }
     stmt
 }
 
@@ -749,6 +757,296 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
             }
         }
         _ => {}
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CR-027: correlated GROUP BY on a pure outer reference (T-SQL code 164)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// PostgreSQL allows a correlated subquery's `GROUP BY` list to consist entirely
+// of columns from the *outer* query (a "pure outer reference"); SQL Server
+// rejects it at parse time:
+//
+//   Msg 164 — Each GROUP BY expression must contain at least one column that is
+//             not an outer reference.
+//
+// Within a correlated subquery such a key is a per-row constant, so the grouping
+// is redundant. The fix makes each `GROUP BY` key contain a *local* column:
+//
+//   1. Preferred — substitute the correlated inner column. If the subquery's
+//      WHERE has an equality `<local col> = <the outer ref>`, replace the outer
+//      key with `<local col>` (`c.customer_id` -> `t.customer_id`). This is
+//      byte-for-byte equivalent to PostgreSQL, including NULL-for-empty groups.
+//   2. Fallback — drop the redundant pure-outer key. Removing a constant key
+//      never changes group membership when other local keys remain.
+//   3. If the list becomes empty, the whole `GROUP BY` is dropped (empty Vec).
+//
+// The walk descends into subqueries because the offending grouping is usually
+// nested inside a correlated scalar subquery, which the shallow
+// `transform_statement` pass never visits. It only touches `GROUP BY` content;
+// every other part of the query is left byte-for-byte unchanged.
+
+/// Recursively apply the CR-027 `GROUP BY` outer-reference fix to every
+/// SELECT reachable from `stmt` (including nested subqueries).
+fn fix_group_by_outer_refs_stmt(stmt: &mut Statement) {
+    match stmt {
+        Statement::Select(sel) => fix_group_by_outer_refs_select(sel),
+        Statement::SetOperation(setop) => {
+            fix_group_by_outer_refs_stmt(&mut setop.left);
+            fix_group_by_outer_refs_stmt(&mut setop.right);
+        }
+        Statement::Insert(ins) => {
+            if let InsertSource::Query(query) = &mut ins.source {
+                fix_group_by_outer_refs_stmt(query);
+            }
+        }
+        Statement::CreateTable(ct) => {
+            if let Some(as_select) = &mut ct.as_select {
+                fix_group_by_outer_refs_stmt(as_select);
+            }
+        }
+        Statement::CreateView(view) => fix_group_by_outer_refs_stmt(&mut view.query),
+        Statement::Explain(explain) => fix_group_by_outer_refs_stmt(&mut explain.statement),
+        _ => {}
+    }
+}
+
+/// Descend into a SELECT's nested statements, then rewrite its own `GROUP BY`.
+fn fix_group_by_outer_refs_select(sel: &mut SelectStatement) {
+    // Recurse into nested statements first (CTEs, derived tables, and any
+    // subqueries embedded in projections / predicates).
+    for cte in &mut sel.ctes {
+        fix_group_by_outer_refs_stmt(&mut cte.query);
+    }
+    if let Some(from) = &mut sel.from {
+        fix_group_by_outer_refs_table_source(&mut from.source);
+    }
+    for join in &mut sel.joins {
+        fix_group_by_outer_refs_table_source(&mut join.table);
+        if let Some(on) = &mut join.on {
+            fix_group_by_outer_refs_in_expr(on);
+        }
+    }
+    for item in &mut sel.columns {
+        if let SelectItem::Expr { expr, .. } = item {
+            fix_group_by_outer_refs_in_expr(expr);
+        }
+    }
+    if let Some(where_clause) = &mut sel.where_clause {
+        fix_group_by_outer_refs_in_expr(where_clause);
+    }
+    if let Some(having) = &mut sel.having {
+        fix_group_by_outer_refs_in_expr(having);
+    }
+    if let Some(qualify) = &mut sel.qualify {
+        fix_group_by_outer_refs_in_expr(qualify);
+    }
+    for order in &mut sel.order_by {
+        fix_group_by_outer_refs_in_expr(&mut order.expr);
+    }
+
+    // Rewrite this node's GROUP BY.
+    if sel.group_by.is_empty() {
+        return;
+    }
+    let local = local_source_names(sel);
+    let group_by = std::mem::take(&mut sel.group_by);
+    let mut kept = Vec::with_capacity(group_by.len());
+    for key in group_by {
+        if is_pure_outer_reference(&key, &local) {
+            // 1) substitute the correlated inner column from a WHERE equality
+            if let Some(inner) = correlated_inner_column(sel.where_clause.as_ref(), &key, &local) {
+                kept.push(inner);
+            }
+            // 2) else drop the redundant pure-outer key
+        } else {
+            kept.push(key);
+        }
+    }
+    // 3) an emptied GROUP BY (empty Vec) is rendered as no clause at all
+    sel.group_by = kept;
+}
+
+/// Recurse into a table source, descending into derived-table subqueries.
+fn fix_group_by_outer_refs_table_source(source: &mut TableSource) {
+    match source {
+        TableSource::Subquery { query, .. } => fix_group_by_outer_refs_stmt(query),
+        TableSource::Lateral { source } => fix_group_by_outer_refs_table_source(source),
+        TableSource::Pivot { source, .. } | TableSource::Unpivot { source, .. } => {
+            fix_group_by_outer_refs_table_source(source);
+        }
+        TableSource::Table(_) | TableSource::TableFunction { .. } | TableSource::Unnest { .. } => {}
+    }
+}
+
+/// Recurse into every subquery embedded anywhere in `expr`. Structural
+/// recursion through composite expressions is handled by [`Expr::transform`];
+/// this only needs to intercept the three statement-bearing variants.
+fn fix_group_by_outer_refs_in_expr(expr: &mut Expr) {
+    let taken = std::mem::replace(expr, Expr::Null);
+    *expr = taken.transform(&|e| match e {
+        Expr::Subquery(mut query) => {
+            fix_group_by_outer_refs_stmt(&mut query);
+            Expr::Subquery(query)
+        }
+        Expr::Exists {
+            mut subquery,
+            negated,
+        } => {
+            fix_group_by_outer_refs_stmt(&mut subquery);
+            Expr::Exists { subquery, negated }
+        }
+        Expr::InSubquery {
+            expr,
+            mut subquery,
+            negated,
+        } => {
+            fix_group_by_outer_refs_stmt(&mut subquery);
+            Expr::InSubquery {
+                expr,
+                subquery,
+                negated,
+            }
+        }
+        other => other,
+    });
+}
+
+/// The set of table names and aliases introduced by this SELECT's own `FROM`
+/// and `JOIN` clauses (lowercased for case-insensitive comparison). A column
+/// qualifier not in this set is an outer/correlated reference.
+fn local_source_names(sel: &SelectStatement) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    if let Some(from) = &sel.from {
+        collect_local_source_names(&from.source, &mut set);
+    }
+    for join in &sel.joins {
+        collect_local_source_names(&join.table, &mut set);
+    }
+    set
+}
+
+fn collect_local_source_names(src: &TableSource, set: &mut std::collections::HashSet<String>) {
+    match src {
+        TableSource::Table(tref) => {
+            set.insert(tref.name.to_lowercase());
+            if let Some(alias) = &tref.alias {
+                set.insert(alias.to_lowercase());
+            }
+        }
+        TableSource::Subquery { alias, .. }
+        | TableSource::TableFunction { alias, .. }
+        | TableSource::Unnest { alias, .. } => {
+            if let Some(alias) = alias {
+                set.insert(alias.to_lowercase());
+            }
+        }
+        TableSource::Lateral { source } => collect_local_source_names(source, set),
+        TableSource::Pivot { source, alias, .. } | TableSource::Unpivot { source, alias, .. } => {
+            collect_local_source_names(source, set);
+            if let Some(alias) = alias {
+                set.insert(alias.to_lowercase());
+            }
+        }
+    }
+}
+
+/// A `GROUP BY` key is a "pure outer reference" iff it contains at least one
+/// column, every column is qualified, and every qualifier is non-local.
+/// Unqualified columns are conservatively treated as local, so any unqualified
+/// column disqualifies the key (it is never rewritten).
+fn is_pure_outer_reference(expr: &Expr, local: &std::collections::HashSet<String>) -> bool {
+    let columns = expr.find_all(&|e| matches!(e, Expr::Column { .. }));
+    if columns.is_empty() {
+        return false;
+    }
+    let mut has_qualified = false;
+    for col in &columns {
+        match col {
+            Expr::Column { table: Some(t), .. } => {
+                if local.contains(&t.to_lowercase()) {
+                    return false;
+                }
+                has_qualified = true;
+            }
+            // Unqualified column — treat as local; the key is not pure-outer.
+            Expr::Column { table: None, .. } => return false,
+            _ => {}
+        }
+    }
+    has_qualified
+}
+
+/// If the subquery's WHERE contains a top-level equality `<local col> = <outer
+/// key>`, return the local column to substitute for the outer key. Recurses
+/// through `AND` and parentheses only (top-level conjuncts).
+fn correlated_inner_column(
+    where_clause: Option<&Expr>,
+    outer_key: &Expr,
+    local: &std::collections::HashSet<String>,
+) -> Option<Expr> {
+    find_correlating_local_column(where_clause?, outer_key, local)
+}
+
+fn find_correlating_local_column(
+    cond: &Expr,
+    outer_key: &Expr,
+    local: &std::collections::HashSet<String>,
+) -> Option<Expr> {
+    match cond {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => find_correlating_local_column(left, outer_key, local)
+            .or_else(|| find_correlating_local_column(right, outer_key, local)),
+        Expr::Nested(inner) => find_correlating_local_column(inner, outer_key, local),
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Eq,
+            right,
+        } => {
+            if columns_match(left, outer_key) && is_local_qualified_column(right, local) {
+                Some((**right).clone())
+            } else if columns_match(right, outer_key) && is_local_qualified_column(left, local) {
+                Some((**left).clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_local_qualified_column(expr: &Expr, local: &std::collections::HashSet<String>) -> bool {
+    matches!(expr, Expr::Column { table: Some(t), .. } if local.contains(&t.to_lowercase()))
+}
+
+/// Compare two column references by qualifier + name, case-insensitively and
+/// ignoring quote style. Non-column expressions never match.
+fn columns_match(a: &Expr, b: &Expr) -> bool {
+    match (a, b) {
+        (
+            Expr::Column {
+                table: ta,
+                name: na,
+                ..
+            },
+            Expr::Column {
+                table: tb,
+                name: nb,
+                ..
+            },
+        ) => {
+            na.eq_ignore_ascii_case(nb)
+                && match (ta, tb) {
+                    (Some(x), Some(y)) => x.eq_ignore_ascii_case(y),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        _ => false,
     }
 }
 

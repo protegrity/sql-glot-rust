@@ -3377,6 +3377,166 @@ fn cr019_control_other_operators_untouched() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// CR-027 (PSQ-3243): a correlated subquery whose GROUP BY is a *pure outer
+// reference* (e.g. `GROUP BY c.customer_id` where `c` is the outer table) is
+// legal in PostgreSQL but rejected by SQL Server with code 164 ("Each GROUP BY
+// expression must contain at least one column that is not an outer reference").
+// The fix substitutes the correlated inner column from the WHERE equality
+// (`c.customer_id` -> `t.customer_id`, byte-exact PG equivalence) or, when no
+// correlating equality exists, drops the redundant pure-outer key.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cr027_scalar_subquery_substitutes_inner_column() {
+    // The reported shape: substitute the correlated inner column so the GROUP BY
+    // key is local (semantics-exact — NULL for empty correlated groups).
+    validate_with_dialect(
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions t \
+         WHERE t.customer_id = c.customer_id GROUP BY c.customer_id) AS cnt FROM customers c",
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE t.customer_id = c.customer_id GROUP BY t.customer_id) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_no_correlating_equality_drops_group_by() {
+    // No `<local> = <outer ref>` equality to substitute, and the pure-outer key
+    // is the only one, so the redundant GROUP BY is dropped entirely.
+    validate_with_dialect(
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions t \
+         WHERE t.flag = 1 GROUP BY c.customer_id) AS cnt FROM customers c",
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE t.flag = 1) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_mixed_keys_substitute_outer_keep_local() {
+    // Mixed GROUP BY: the pure-outer key is substituted, the local key kept.
+    validate_with_dialect(
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions t \
+         WHERE t.customer_id = c.customer_id GROUP BY c.customer_id, t.status) AS cnt FROM customers c",
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE t.customer_id = c.customer_id GROUP BY t.customer_id, t.status) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_mixed_keys_no_equality_drops_outer_keep_local() {
+    // Mixed GROUP BY with no correlating equality: drop the pure-outer key,
+    // keep the local key. The remaining local key keeps the grouping valid.
+    validate_with_dialect(
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions t \
+         WHERE t.flag = 1 GROUP BY c.customer_id, t.status) AS cnt FROM customers c",
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE t.flag = 1 GROUP BY t.status) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_reversed_equality_substitutes_inner_column() {
+    // The correlating equality may be written `c.id = t.customer_id` (outer on
+    // the left); the local column is still substituted.
+    validate_with_dialect(
+        "SELECT c.id, (SELECT COUNT(*) FROM transactions t \
+         WHERE c.id = t.customer_id GROUP BY c.id) AS cnt FROM customers c",
+        "SELECT c.id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE c.id = t.customer_id GROUP BY t.customer_id) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_exists_subquery_pure_outer_group_by() {
+    // The rewrite reaches subqueries in the WHERE clause (EXISTS), not just the
+    // projection list.
+    validate_with_dialect(
+        "SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM transactions t \
+         WHERE t.customer_id = c.id GROUP BY c.id)",
+        "SELECT c.id FROM customers AS c WHERE EXISTS (SELECT 1 FROM transactions AS t \
+         WHERE t.customer_id = c.id GROUP BY t.customer_id)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_unqualified_group_by_key_untouched() {
+    // An unqualified GROUP BY key is conservatively treated as local and never
+    // rewritten (it does not trip code 164).
+    validate_with_dialect(
+        "SELECT c.id, (SELECT COUNT(*) FROM transactions t \
+         WHERE t.customer_id = c.id GROUP BY customer_id) AS cnt FROM customers c",
+        "SELECT c.id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE t.customer_id = c.id GROUP BY customer_id) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_control_inner_column_group_by_unchanged() {
+    // A GROUP BY that already references a local column is valid T-SQL and must
+    // be left byte-for-byte unchanged.
+    validate_with_dialect(
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions t \
+         WHERE t.customer_id = c.customer_id GROUP BY t.customer_id) AS cnt FROM customers c",
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE t.customer_id = c.customer_id GROUP BY t.customer_id) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_control_real_outer_query_grouping_unchanged() {
+    // Top-level grouping by `c.city` where `c` IS local (joined here) must not
+    // be treated as an outer reference.
+    validate_with_dialect(
+        "SELECT c.city, COUNT(t.id) FROM customers c \
+         JOIN transactions t ON t.customer_id = c.id GROUP BY c.city",
+        "SELECT c.city, COUNT(t.id) FROM customers AS c \
+         INNER JOIN transactions AS t ON t.customer_id = c.id GROUP BY c.city",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr027_control_pg_to_pg_passthrough() {
+    // PostgreSQL accepts a pure-outer GROUP BY, so PG -> PG must not fire.
+    validate_with_dialect(
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions t \
+         WHERE t.customer_id = c.customer_id GROUP BY c.customer_id) AS cnt FROM customers c",
+        "SELECT c.customer_id, (SELECT COUNT(*) FROM transactions AS t \
+         WHERE t.customer_id = c.customer_id GROUP BY c.customer_id) AS cnt FROM customers AS c",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr027_control_uncorrelated_derived_table_unchanged() {
+    // A non-correlated derived table grouping by its own local column is
+    // untouched (regression guard for the FROM-subquery descent).
+    validate_with_dialect(
+        "SELECT x FROM (SELECT COUNT(*) AS x FROM transactions t GROUP BY t.status) d",
+        "SELECT x FROM (SELECT COUNT(*) AS x FROM transactions AS t GROUP BY t.status) AS d",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // CR-023 (PSQ-3005): T-SQL NCHAR / NVARCHAR length and VARCHAR(MAX) /
 // NVARCHAR(MAX) must round-trip. Previously the length / MAX modifier was
 // dropped, so MSSQL applied its CAST default length of 30 (padding NCHAR,
