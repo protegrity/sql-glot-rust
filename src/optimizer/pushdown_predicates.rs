@@ -702,6 +702,7 @@ mod tests {
                 fetch_first: None,
                 qualify: None,
                 window_definitions: vec![],
+                query_options: None,
             })),
             negated: false,
         };

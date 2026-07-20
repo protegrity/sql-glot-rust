@@ -441,6 +441,8 @@ impl Generator {
                 self.write_keyword("ROWS ONLY");
             }
         }
+
+        self.gen_query_options(&sel.query_options);
     }
 
     fn gen_ctes(&mut self, ctes: &[Cte]) {
@@ -794,6 +796,23 @@ impl Generator {
             self.sep();
             self.write_keyword("OFFSET ");
             self.gen_expr(offset);
+        }
+
+        self.gen_query_options(&sop.query_options);
+    }
+
+    /// Emit a T-SQL statement-tail `OPTION ( ... )` query hint when present.
+    /// Only the T-SQL family (`Tsql`, `Fabric`) has this clause; every other
+    /// dialect silently drops it (there is no portable equivalent).
+    fn gen_query_options(&mut self, query_options: &Option<String>) {
+        if let Some(opts) = query_options
+            && matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric))
+        {
+            self.sep();
+            self.write_keyword("OPTION");
+            self.write(" (");
+            self.write(opts);
+            self.write(")");
         }
     }
 
