@@ -3793,3 +3793,138 @@ fn cr026_control_varchar_finite_preserved() {
         Dialect::Oracle,
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-028 (PSQ-3264): T-SQL statement-tail `OPTION ( ... )` query hint.
+// The clause (most importantly `OPTION (MAXRECURSION n)` for recursive CTEs)
+// must survive a parse→generate round-trip and be emitted only for the T-SQL
+// family; every other target drops it (no portable equivalent).
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cr028_pg_to_tsql_maxrecursion_preserved() {
+    // The reported defect: the gateway parses client SQL as Postgres and
+    // generates T-SQL; the recursive-CTE OPTION clause must be preserved so
+    // MSSQL does not fall back to its default MAXRECURSION 100.
+    validate_with_dialect(
+        "WITH r (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 200) \
+         SELECT count(*) FROM r OPTION (MAXRECURSION 200)",
+        "WITH r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 200) \
+         SELECT COUNT(*) FROM r OPTION (MAXRECURSION 200)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_tsql_to_tsql_maxrecursion_roundtrip() {
+    validate_with_dialect(
+        "WITH r (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 200) \
+         SELECT count(*) FROM r OPTION (MAXRECURSION 200)",
+        "WITH r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 200) \
+         SELECT COUNT(*) FROM r OPTION (MAXRECURSION 200)",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_maxrecursion_zero_unlimited() {
+    // MAXRECURSION 0 means "unlimited" — must be preserved verbatim.
+    validate_with_dialect(
+        "SELECT count(*) FROM r OPTION (MAXRECURSION 0)",
+        "SELECT COUNT(*) FROM r OPTION (MAXRECURSION 0)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_multi_hint_preserved() {
+    // Multiple comma-separated hints round-trip with correct spacing.
+    validate_with_dialect(
+        "SELECT count(*) FROM r OPTION (MAXRECURSION 100, RECOMPILE)",
+        "SELECT COUNT(*) FROM r OPTION (MAXRECURSION 100, RECOMPILE)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_trailing_semicolon_handled() {
+    // A trailing `;` after the OPTION clause is consumed; the clause survives.
+    validate_with_dialect(
+        "SELECT a FROM t OPTION (MAXRECURSION 5);",
+        "SELECT a FROM t OPTION (MAXRECURSION 5)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_top_level_setop_option_preserved() {
+    // OPTION at the tail of a top-level set operation attaches to the
+    // SetOperation node (not just plain SELECT).
+    validate_with_dialect(
+        "SELECT 1 AS n UNION ALL SELECT 2 OPTION (MAXRECURSION 0)",
+        "SELECT 1 AS n UNION ALL SELECT 2 OPTION (MAXRECURSION 0)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_control_pg_to_pg_drops_option() {
+    // PostgreSQL has no OPTION clause, so a PG target must drop it.
+    validate_with_dialect(
+        "SELECT count(*) FROM r OPTION (MAXRECURSION 200)",
+        "SELECT COUNT(*) FROM r",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr028_control_tsql_to_oracle_drops_option() {
+    // Oracle has no portable MAXRECURSION equivalent — the clause is dropped.
+    // (`FROM DUAL` is unrelated CR-021 behavior for FROM-less selects.)
+    validate_with_dialect(
+        "SELECT 1 UNION ALL SELECT 2 OPTION (MAXRECURSION 0)",
+        "SELECT 1 FROM DUAL UNION ALL SELECT 2 FROM DUAL",
+        Dialect::Tsql,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr028_control_no_false_match_in_list() {
+    // A trailing `IN (...)` list must not be mistaken for an OPTION clause.
+    validate_with_dialect(
+        "SELECT a FROM t WHERE a IN (1, 2, 3)",
+        "SELECT a FROM t WHERE a IN (1, 2, 3)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_control_no_false_match_string_literal() {
+    // A string literal 'OPTION' is a String token, never matched as the hint.
+    validate_with_dialect(
+        "SELECT 'OPTION' AS x FROM t",
+        "SELECT 'OPTION' AS x FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr028_control_no_false_match_derived_table() {
+    // A statement ending in a derived table (subquery) carries no OPTION.
+    validate_with_dialect(
+        "SELECT x FROM (SELECT 1 AS x) d",
+        "SELECT x FROM (SELECT 1 AS x) AS d",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}

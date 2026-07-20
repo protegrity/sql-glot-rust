@@ -143,6 +143,12 @@ pub struct SelectStatement {
     pub qualify: Option<Expr>,
     /// Named WINDOW definitions
     pub window_definitions: Vec<WindowDefinition>,
+    /// T-SQL trailing query hint: the verbatim inner text of a statement-tail
+    /// `OPTION ( ... )` clause (e.g. `"MAXRECURSION 200"`). `None` when absent.
+    /// Captured opaquely so it survives a `parse -> generate` round-trip; emitted
+    /// only for the T-SQL family and dropped for dialects that have no such clause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_options: Option<String>,
 }
 
 /// A Common Table Expression: `name [(col1, col2)] AS [NOT] MATERIALIZED (query)`
@@ -181,6 +187,10 @@ pub struct SetOperationStatement {
     pub order_by: Vec<OrderByItem>,
     pub limit: Option<Expr>,
     pub offset: Option<Expr>,
+    /// T-SQL trailing query hint: the verbatim inner text of a statement-tail
+    /// `OPTION ( ... )` clause. `None` when absent. See [`SelectStatement::query_options`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_options: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

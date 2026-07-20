@@ -233,6 +233,45 @@ impl Parser {
         Self::join_tokens_for_raw(&self.tokens[start..self.pos])
     }
 
+    /// Capture the inner text of a statement-tail `OPTION ( ... )` query hint.
+    ///
+    /// Assumes the current token is `OPTION` immediately followed by `(`.
+    /// Consumes `OPTION`, the balanced parenthesized group (including the
+    /// closing `)`), and returns the reconstructed inner text — e.g.
+    /// `"MAXRECURSION 200"` or `"MAXRECURSION 100, RECOMPILE"`. Returns `None`
+    /// for empty or unbalanced parentheses (defensive).
+    fn capture_query_option_text(&mut self) -> Option<String> {
+        self.advance(); // OPTION
+        if !self.match_token(TokenType::LParen) {
+            return None;
+        }
+        let start = self.pos;
+        let mut depth: i32 = 1;
+        while self.pos < self.tokens.len() {
+            match &self.tokens[self.pos].token_type {
+                TokenType::Eof => break,
+                TokenType::LParen => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                TokenType::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    self.pos += 1;
+                }
+                _ => self.pos += 1,
+            }
+        }
+        if depth != 0 {
+            return None; // unbalanced — leave position where it stopped
+        }
+        let inner = Self::join_tokens_for_raw(&self.tokens[start..self.pos]);
+        self.pos += 1; // consume the closing ')'
+        if inner.is_empty() { None } else { Some(inner) }
+    }
+
     /// Parse a comma-separated list of raw items inside an already-opened
     /// parenthesized context. Stops at the matching `)` and returns each item
     /// reconstructed from tokens.
@@ -718,7 +757,31 @@ impl Parser {
     /// Parse a single SQL statement.
     pub fn parse_statement(&mut self) -> Result<Statement> {
         self.collect_comments();
-        let stmt = self.parse_statement_inner()?;
+        let mut stmt = self.parse_statement_inner()?;
+        // T-SQL statement-tail query hint: `... OPTION ( <hint> [, <hint> ...] )`
+        // (most importantly `OPTION (MAXRECURSION n)` for recursive CTEs). This
+        // is only reached at true statement top level — subqueries, CTEs,
+        // derived tables and set-op branches all parse via
+        // `parse_statement_inner`, so recognizing it here cannot false-match a
+        // trailing `IN (...)`, a subquery, or a column named `option`. The
+        // clause is captured opaquely and carried on the AST so it survives a
+        // `parse -> generate` round-trip; the generator emits it only for the
+        // T-SQL family and drops it for dialects that have no such clause.
+        if self.check_keyword("OPTION")
+            && self
+                .peek_offset(1)
+                .map(|t| matches!(t.token_type, TokenType::LParen))
+                .unwrap_or(false)
+            && matches!(stmt, Statement::Select(_) | Statement::SetOperation(_))
+        {
+            if let Some(opts) = self.capture_query_option_text() {
+                match &mut stmt {
+                    Statement::Select(sel) => sel.query_options = Some(opts),
+                    Statement::SetOperation(sop) => sop.query_options = Some(opts),
+                    _ => {}
+                }
+            }
+        }
         // ClickHouse trailing `WITH TOTALS` / `WITH TIES` / `WITH ROLLUP` /
         // `WITH CUBE` postfix at the end of a SELECT — these are query-level
         // modifiers we don't model; swallow them so the statement closes.
@@ -1383,6 +1446,7 @@ impl Parser {
                     fetch_first: None,
                     qualify: None,
                     window_definitions: vec![],
+                    query_options: None,
                 };
                 Ok(Statement::Select(select))
             }
@@ -1853,6 +1917,7 @@ impl Parser {
             fetch_first,
             qualify,
             window_definitions,
+            query_options: None,
         })
     }
 
@@ -1894,6 +1959,7 @@ impl Parser {
                         order_by: vec![],
                         limit: None,
                         offset: None,
+                        query_options: None,
                     }));
                 }
                 return Ok(left);
@@ -1924,6 +1990,7 @@ impl Parser {
             order_by: vec![],
             limit: None,
             offset: None,
+            query_options: None,
         });
 
         // Parse trailing ORDER BY / LIMIT / OFFSET that applies to the whole set operation
@@ -4162,6 +4229,7 @@ impl Parser {
                 fetch_first: None,
                 qualify: None,
                 window_definitions: vec![],
+                query_options: None,
             });
             InsertSource::Query(Box::new(stmt))
         } else if self.peek().value.eq_ignore_ascii_case("FORMAT") {

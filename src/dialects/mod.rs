@@ -1599,6 +1599,7 @@ fn transform_limit(sel: &mut SelectStatement, target: Dialect) {
                             fetch_first: None,
                             qualify: None,
                             window_definitions: Vec::new(),
+                            query_options: None,
                         }))),
                         ascending: true,
                         nulls_first: None,
