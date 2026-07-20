@@ -1066,6 +1066,27 @@ fn is_zero_guarded_divisor(expr: &Expr) -> bool {
     }
 }
 
+/// CR-029 (PSQ-3267): returns `true` when `expr` is a compile-time numeric
+/// literal — optionally wrapped in redundant parentheses or a leading unary
+/// sign (`0`, `(0)`, `-0`, `+5`). The CR-019 safe-divide wrap must NOT be
+/// applied to a literal divisor: a literal `0` is an unconditional
+/// divide-by-zero that must error on the backend (matching PostgreSQL and
+/// Oracle, which raise a hard error), and a literal non-zero divisor can never
+/// be `0`, so `NULLIF(<lit>, 0)` would be dead code. Only non-literal divisors
+/// (columns, expressions, `CAST`, subqueries) keep the guard — exactly the
+/// PSQ-2758 / q74 shape CR-019 was written for.
+fn is_numeric_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number(_) => true,
+        Expr::Nested(inner) => is_numeric_literal(inner),
+        Expr::UnaryOp {
+            op: UnaryOperator::Minus | UnaryOperator::Plus,
+            expr,
+        } => is_numeric_literal(expr),
+        _ => false,
+    }
+}
+
 /// Transform an expression for the target dialect.
 fn transform_expr(expr: Expr, target: Dialect) -> Expr {
     match expr {
@@ -1201,9 +1222,18 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
             // b <> 0, so non-zero divisors are behaviorally unaffected. Modulo is
             // included because `x % 0` raises the same 8134 error class. A divisor
             // already written as NULLIF(<x>, 0) is left as-is (no double wrap).
+            //
+            // CR-029 (PSQ-3267): a divisor that is a compile-time numeric literal
+            // is also left as-is. Wrapping a literal `0` would convert a genuine,
+            // unconditional divide-by-zero (which PostgreSQL and Oracle both raise
+            // as a hard error) into a silent NULL on MSSQL, masking SQL Server
+            // code 8134; wrapping a literal non-zero divisor is dead code. Only
+            // non-literal divisors can be undecidably zero at transpile time, so
+            // only they need the guard.
             if is_tsql_family(target)
                 && matches!(op, BinaryOperator::Divide | BinaryOperator::Modulo)
                 && !is_zero_guarded_divisor(&right_transformed)
+                && !is_numeric_literal(&right_transformed)
             {
                 return Expr::BinaryOp {
                     left: Box::new(left_transformed),

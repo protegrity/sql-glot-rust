@@ -3377,6 +3377,132 @@ fn cr019_control_other_operators_untouched() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// CR-029 (PSQ-3267): the CR-019 safe-divide wrap must NOT be applied to a
+// divisor that is a compile-time numeric literal. Wrapping a literal `0`
+// (`SELECT 1/0`) turns a genuine, unconditional divide-by-zero — which
+// PostgreSQL and Oracle both raise as a hard error — into a silent NULL on
+// MSSQL, masking SQL Server code 8134. Wrapping a literal non-zero divisor
+// (`SELECT 10/2`) is dead code. Only non-literal divisors (columns, CAST,
+// expressions, subqueries) can be undecidably zero at transpile time, so only
+// they keep the NULLIF guard — exactly the PSQ-2758 / q74 shape.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cr029_literal_divide_by_zero_not_wrapped() {
+    // A genuine constant divide-by-zero must be forwarded verbatim so MSSQL
+    // raises code 8134 (consistent with PostgreSQL / Oracle), not masked to NULL.
+    validate_with_dialect(
+        "SELECT 1 / 0",
+        "SELECT 1 / 0",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr029_literal_divide_by_zero_nonunit_dividend() {
+    validate_with_dialect(
+        "SELECT 7 / 0",
+        "SELECT 7 / 0",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr029_literal_modulo_by_zero_not_wrapped() {
+    // `x % 0` raises the same 8134 class; a literal modulo must not be masked.
+    validate_with_dialect(
+        "SELECT 1 % 0",
+        "SELECT 1 % 0",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr029_literal_nonzero_divisor_not_wrapped() {
+    // A literal non-zero divisor can never be 0, so the NULLIF was dead code.
+    validate_with_dialect(
+        "SELECT 10 / 2",
+        "SELECT 10 / 2",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr029_parenthesized_literal_divisor_not_wrapped() {
+    // A literal wrapped in redundant parentheses is still a literal — no guard.
+    let out = transpile("SELECT a / (0) FROM t", Dialect::Postgres, Dialect::Tsql).unwrap();
+    assert!(
+        !out.contains("NULLIF"),
+        "parenthesized literal divisor must not be zero-guarded: {out}"
+    );
+}
+
+#[test]
+fn cr029_signed_literal_divisor_not_wrapped() {
+    // A leading unary sign on a literal is still a literal (exercises the
+    // UnaryOp arm of is_numeric_literal); a non-zero literal needs no guard.
+    let out = transpile("SELECT a / -1 FROM t", Dialect::Postgres, Dialect::Tsql).unwrap();
+    assert!(
+        !out.contains("NULLIF"),
+        "signed literal divisor must not be zero-guarded: {out}"
+    );
+}
+
+#[test]
+fn cr029_control_column_divisor_still_guarded() {
+    // A non-literal (column) divisor keeps the CR-019 guard — PSQ-2758 preserved.
+    validate_with_dialect(
+        "SELECT a / b FROM t",
+        "SELECT a / NULLIF(b, 0) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr029_control_cast_divisor_still_guarded() {
+    // A CAST divisor is non-literal — the q74 shape must remain guarded.
+    validate_with_dialect(
+        "SELECT a / CAST(b AS DECIMAL(18, 4)) FROM t",
+        "SELECT a / NULLIF(CAST(b AS DECIMAL(18, 4)), 0) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr029_control_q74_outer_predicate_still_guarded() {
+    // The reported q74 outer predicate (non-literal CAST divisor) stays guarded.
+    let out = transpile(
+        "SELECT count(*) FROM (SELECT c.id cid, SUM(t.y1) y1, SUM(t.y2) y2 \
+         FROM t GROUP BY c.id) v \
+         WHERE v.y1 > 0 AND v.y2 > 0 AND v.y2 / CAST(v.y1 AS DECIMAL(18, 4)) > 1.0",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    )
+    .unwrap();
+    assert!(
+        out.contains("v.y2 / NULLIF(CAST(v.y1 AS DECIMAL(18, 4)), 0)"),
+        "non-literal q74 divisor must stay zero-guarded: {out}"
+    );
+}
+
+#[test]
+fn cr029_control_non_tsql_passthrough() {
+    // Non-T-SQL targets are unaffected: PostgreSQL already errors on 1/0.
+    validate_with_dialect(
+        "SELECT 1 / 0",
+        "SELECT 1 / 0",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // CR-027 (PSQ-3243): a correlated subquery whose GROUP BY is a *pure outer
 // reference* (e.g. `GROUP BY c.customer_id` where `c` is the outer table) is
 // legal in PostgreSQL but rejected by SQL Server with code 164 ("Each GROUP BY
