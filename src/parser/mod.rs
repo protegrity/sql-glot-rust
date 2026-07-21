@@ -3,7 +3,7 @@ mod sql_parser;
 pub use sql_parser::Parser;
 
 use crate::ast::Statement;
-use crate::dialects::Dialect;
+use crate::dialects::{Dialect, is_tsql_family};
 use crate::errors::Result;
 
 /// Parse a SQL string into a [`Statement`] AST using the given dialect.
@@ -12,8 +12,8 @@ use crate::errors::Result;
 ///
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if the input
 /// is not valid SQL.
-pub fn parse(sql: &str, _dialect: Dialect) -> Result<Statement> {
-    let mut parser = Parser::new(sql)?;
+pub fn parse(sql: &str, dialect: Dialect) -> Result<Statement> {
+    let mut parser = Parser::new_with_bracket_identifiers(sql, is_tsql_family(dialect))?;
     parser.parse_statement()
 }
 
@@ -26,8 +26,9 @@ pub fn parse(sql: &str, _dialect: Dialect) -> Result<Statement> {
 ///
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if the input
 /// is not valid SQL.
-pub fn parse_with_comments(sql: &str, _dialect: Dialect) -> Result<Statement> {
-    let mut parser = Parser::new_with_comments(sql)?;
+pub fn parse_with_comments(sql: &str, dialect: Dialect) -> Result<Statement> {
+    let mut parser =
+        Parser::new_with_comments_and_bracket_identifiers(sql, is_tsql_family(dialect))?;
     parser.parse_statement()
 }
 
@@ -36,8 +37,8 @@ pub fn parse_with_comments(sql: &str, _dialect: Dialect) -> Result<Statement> {
 /// # Errors
 ///
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if parsing fails.
-pub fn parse_statements(sql: &str, _dialect: Dialect) -> Result<Vec<Statement>> {
-    let mut parser = Parser::new(sql)?;
+pub fn parse_statements(sql: &str, dialect: Dialect) -> Result<Vec<Statement>> {
+    let mut parser = Parser::new_with_bracket_identifiers(sql, is_tsql_family(dialect))?;
     parser.parse_statements()
 }
 
@@ -46,7 +47,8 @@ pub fn parse_statements(sql: &str, _dialect: Dialect) -> Result<Vec<Statement>> 
 /// # Errors
 ///
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if parsing fails.
-pub fn parse_statements_with_comments(sql: &str, _dialect: Dialect) -> Result<Vec<Statement>> {
-    let mut parser = Parser::new_with_comments(sql)?;
+pub fn parse_statements_with_comments(sql: &str, dialect: Dialect) -> Result<Vec<Statement>> {
+    let mut parser =
+        Parser::new_with_comments_and_bracket_identifiers(sql, is_tsql_family(dialect))?;
     parser.parse_statements()
 }

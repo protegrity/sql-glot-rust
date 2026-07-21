@@ -4054,3 +4054,144 @@ fn cr028_control_no_false_match_derived_table() {
         Dialect::Tsql,
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-030 (PSQ-3261): T-SQL / Fabric use `[...]` exclusively for delimited
+// identifiers and have no array literal or subscript syntax. The tokenizer's
+// context-free `[` disambiguation used to treat `[ident]` as an array subscript
+// whenever the previous token was a "subscriptable" value (a number, `)`,
+// string, etc.). So re-parsing generated T-SQL like `SELECT TOP 1000 [col]`
+// (number `1000` before `[`) misparsed `[col]` as an ARRAY constructor,
+// emitting `ARRAY[col]` / `->` — the stray `-` MSSQL rejected on Power BI Load.
+// The fix makes `parse()` honor the dialect: for the T-SQL family `[...]` is
+// always tokenized as a bracket-quoted identifier. Non-bracket dialects keep
+// full array-subscript semantics (see the control tests below).
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cr030_top_qualified_bracket_projection_roundtrip() {
+    // The exact reported Power BI Load query (T-SQL → T-SQL schema-injection
+    // round-trip). Must preserve the bracketed identifiers, never become ARRAY.
+    validate_with_dialect(
+        "SELECT TOP 1000 [rows].[customer_id] FROM (SELECT customer_id FROM gateway.customers) AS [rows]",
+        "SELECT TOP 1000 [rows].[customer_id] FROM (SELECT customer_id FROM gateway.customers) AS [rows]",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr030_top_qualified_bracket_pair() {
+    // `TOP n` followed by a qualified bracketed identifier `[a].[b]` — the case
+    // that previously produced `ARRAY[a]->'b'`.
+    validate_with_dialect(
+        "SELECT TOP 1000 [a].[b] FROM t",
+        "SELECT TOP 1000 [a].[b] FROM t",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr030_top_single_bracket_projection() {
+    // `TOP n` followed by a single bracketed identifier — previously parsed as
+    // a bare `ARRAY[c]` column ("Invalid column name 'ARRAY'").
+    validate_with_dialect(
+        "SELECT TOP 1000 [c] FROM t",
+        "SELECT TOP 1000 [c] FROM t",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr030_top_parenthesized_before_bracket() {
+    // `TOP (n)` leaves `)` (RParen) as the previous token, another subscriptable
+    // value that used to trip the heuristic.
+    validate_with_dialect(
+        "SELECT TOP (10) [c] FROM t",
+        "SELECT TOP (10) [c] FROM t",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr030_implicit_bracket_alias_after_number() {
+    // Implicit bracket alias after a numeric projection (`5 [b]`) — the same
+    // Number-before-`[` trigger; must be an alias, not `5[b]` array indexing.
+    validate_with_dialect(
+        "SELECT 5 [b] FROM t",
+        "SELECT 5 AS [b] FROM t",
+        Dialect::Tsql,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr030_fabric_top_single_bracket_projection() {
+    // Fabric is in the T-SQL family and gets the same bracket-identifier rule.
+    validate_with_dialect(
+        "SELECT TOP 1000 [c] FROM t",
+        "SELECT TOP 1000 [c] FROM t",
+        Dialect::Fabric,
+        Dialect::Fabric,
+    );
+}
+
+#[test]
+fn cr030_tsql_to_postgres_top_bracket() {
+    // The bracketed identifiers must survive as identifiers cross-dialect:
+    // T-SQL `TOP` → PostgreSQL `LIMIT`, brackets → double quotes.
+    validate_with_dialect(
+        "SELECT TOP 1000 [rows].[customer_id] FROM (SELECT customer_id FROM gateway.customers) AS [rows]",
+        "SELECT \"rows\".\"customer_id\" FROM (SELECT customer_id FROM gateway.customers) AS \"rows\" LIMIT 1000",
+        Dialect::Tsql,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr030_postgres_to_tsql_powerbi_load_shape() {
+    // The Npgsql-generated Power BI Load query (PostgreSQL) → T-SQL. This is the
+    // shape that, once re-parsed as T-SQL for schema injection, used to corrupt.
+    validate_with_dialect(
+        "SELECT \"rows\".\"customer_id\" FROM (SELECT * FROM \"gateway\".\"customers\") \"rows\" LIMIT 1000",
+        "SELECT TOP 1000 [rows].[customer_id] FROM (SELECT * FROM gateway.[customers]) AS [rows]",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr030_control_postgres_array_subscript_preserved() {
+    // Control: non-bracket dialects keep array-subscript semantics unchanged.
+    validate_with_dialect(
+        "SELECT arr[1] FROM t",
+        "SELECT arr[1] FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr030_control_postgres_array_literal_preserved() {
+    // Control: a genuine PostgreSQL ARRAY literal is untouched.
+    validate_with_dialect(
+        "SELECT ARRAY[1, 2, 3] FROM t",
+        "SELECT ARRAY[1, 2, 3] FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr030_control_clickhouse_array_subscript_preserved() {
+    // Control: ClickHouse array subscript semantics are unaffected.
+    validate_with_dialect(
+        "SELECT arr[1] FROM t",
+        "SELECT arr[1] FROM t",
+        Dialect::ClickHouse,
+        Dialect::ClickHouse,
+    );
+}
