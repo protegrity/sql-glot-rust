@@ -53,6 +53,12 @@ pub struct Tokenizer {
     /// `[` handler to disambiguate bracket-quoted identifiers from array
     /// subscripts.
     prev_token_type: Option<TokenType>,
+    /// When `true`, `[...]` is always read as a bracket-quoted identifier
+    /// (T-SQL / Fabric semantics), never as an array literal or subscript.
+    /// These dialects use `[` solely for delimited identifiers and have no
+    /// array syntax, so the context-free subscript heuristic would otherwise
+    /// misparse `SELECT TOP 1 [col]` and implicit aliases like `x [col]`.
+    brackets_are_identifiers: bool,
 }
 
 impl Tokenizer {
@@ -66,6 +72,7 @@ impl Tokenizer {
             col: 1,
             preserve_comments: false,
             prev_token_type: None,
+            brackets_are_identifiers: false,
         }
     }
 
@@ -79,7 +86,17 @@ impl Tokenizer {
             col: 1,
             preserve_comments: true,
             prev_token_type: None,
+            brackets_are_identifiers: false,
         }
+    }
+
+    /// Configure whether `[...]` is always tokenized as a bracket-quoted
+    /// identifier (T-SQL / Fabric semantics) rather than being disambiguated
+    /// against array subscript syntax. Returns `self` for builder-style use.
+    #[must_use]
+    pub fn with_bracket_identifiers(mut self, on: bool) -> Self {
+        self.brackets_are_identifiers = on;
+        self
     }
 
     /// Tokenize the entire input and return a vector of tokens.
@@ -161,6 +178,15 @@ impl Tokenizer {
             '(' => Ok(self.make_token(TokenType::LParen, "(", start, start_line, start_col)),
             ')' => Ok(self.make_token(TokenType::RParen, ")", start, start_line, start_col)),
             '[' => {
+                // In bracket-quoting dialects (T-SQL / Fabric) `[` is used
+                // exclusively for delimited identifiers and there is no array
+                // literal or subscript syntax, so `[...]` is unconditionally a
+                // quoted identifier. This avoids the context-free heuristic
+                // below misreading e.g. `SELECT TOP 1000 [col]` (number before
+                // `[`) or `x [col]` (implicit alias) as an array subscript.
+                if self.brackets_are_identifiers {
+                    return self.read_quoted_identifier(start, start_line, start_col, '[');
+                }
                 // Decide between two readings of `[`:
                 //   1. Bracket-quoted identifier (T-SQL / SQLite style): `[name]`,
                 //      `[#]`, `[1]`, `[User Link]`. Inner content may be anything

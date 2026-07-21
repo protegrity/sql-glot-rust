@@ -51,6 +51,37 @@ impl Parser {
         })
     }
 
+    /// Create a new parser, forcing `[...]` to tokenize as bracket-quoted
+    /// identifiers when `brackets_are_identifiers` is set (T-SQL / Fabric,
+    /// which have no array syntax).
+    pub fn new_with_bracket_identifiers(sql: &str, brackets_are_identifiers: bool) -> Result<Self> {
+        let mut tokenizer = Tokenizer::new(sql).with_bracket_identifiers(brackets_are_identifiers);
+        let tokens = tokenizer.tokenize()?;
+        Ok(Self {
+            tokens,
+            pos: 0,
+            preserve_comments: false,
+            pending_comments: Vec::new(),
+        })
+    }
+
+    /// Like [`Parser::new_with_bracket_identifiers`] but also preserves SQL
+    /// comments in the AST.
+    pub fn new_with_comments_and_bracket_identifiers(
+        sql: &str,
+        brackets_are_identifiers: bool,
+    ) -> Result<Self> {
+        let mut tokenizer =
+            Tokenizer::with_comments(sql).with_bracket_identifiers(brackets_are_identifiers);
+        let tokens = tokenizer.tokenize()?;
+        Ok(Self {
+            tokens,
+            pos: 0,
+            preserve_comments: true,
+            pending_comments: Vec::new(),
+        })
+    }
+
     // ── Comment helpers ────────────────────────────────────────────
 
     /// Consume any comment tokens at the current position, accumulating
