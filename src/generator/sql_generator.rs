@@ -28,7 +28,7 @@ impl Generator {
 
     /// Create a generator that produces formatted SQL.
     #[deprecated(
-        since = "0.10.17",
+        since = "0.10.21",
         note = "use `with_dialect(dialect).generate_pretty(stmt)` to format for a target dialect"
     )]
     #[must_use]
