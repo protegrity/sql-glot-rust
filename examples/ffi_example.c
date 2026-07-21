@@ -52,6 +52,13 @@ int main(void) {
             printf("Regenerated (Postgres): %s\n", regenerated);
             sqlglot_free(regenerated);
         }
+
+        char *pretty = sqlglot_generate_pretty(json, "postgres");
+        if (pretty) {
+            printf("Pretty (Postgres):\n%s\n", pretty);
+            sqlglot_free(pretty);
+        }
+
         sqlglot_free(json);
     }
 

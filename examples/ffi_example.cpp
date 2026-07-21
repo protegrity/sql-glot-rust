@@ -59,6 +59,13 @@ std::optional<std::string> generate(const char *ast_json, const char *dialect = 
     return std::string(result.get());
 }
 
+/// Generate formatted SQL from a JSON AST, or std::nullopt on failure.
+std::optional<std::string> generate_pretty(const char *ast_json, const char *dialect = nullptr) {
+    SqlglotString result(sqlglot_generate_pretty(ast_json, dialect));
+    if (!result) return std::nullopt;
+    return std::string(result.get());
+}
+
 // ── Main ────────────────────────────────────────────────────────────────
 
 int main() {
@@ -90,10 +97,13 @@ int main() {
     auto json = parse(input, "ansi");
     if (json) {
         auto sql = generate(json->c_str(), "snowflake");
+        auto pretty = generate_pretty(json->c_str(), "snowflake");
         std::printf("Round-trip through JSON AST:\n"
                     "  Original:  %s\n"
-                    "  Generated: %s\n",
-                    input, sql ? sql->c_str() : "(error)");
+                    "  Generated: %s\n"
+                    "  Pretty:\n%s\n",
+                    input, sql ? sql->c_str() : "(error)",
+                    pretty ? pretty->c_str() : "(error)");
     }
 
     return 0;

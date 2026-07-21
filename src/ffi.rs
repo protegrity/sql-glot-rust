@@ -115,6 +115,30 @@ pub unsafe extern "C" fn sqlglot_generate(
     }
 }
 
+/// Generate pretty-printed SQL from a JSON-serialised AST for the given dialect.
+///
+/// * `ast_json` – null-terminated JSON string of a serialised `Statement`.
+/// * `dialect`  – target dialect name, or `NULL` for ANSI.
+///
+/// Returns a heap-allocated SQL string on success, or `NULL` on failure.
+/// The caller **must** free a non-null return value with [`sqlglot_free`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sqlglot_generate_pretty(
+    ast_json: *const c_char,
+    dialect: *const c_char,
+) -> *mut c_char {
+    let json_str = match unsafe { cstr_to_option(ast_json) } {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let dialect_enum = resolve_dialect(unsafe { cstr_to_option(dialect) });
+
+    match serde_json::from_str::<crate::ast::Statement>(json_str) {
+        Ok(ast) => to_c_string(crate::generate_pretty(&ast, dialect_enum)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Return the library version as a static null-terminated string.
 ///
 /// The returned pointer **must not** be freed — it points to static memory.

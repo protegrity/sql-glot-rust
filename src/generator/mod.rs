@@ -16,7 +16,7 @@ pub fn generate(statement: &Statement, dialect: Dialect) -> String {
 ///
 /// Produces formatted SQL with newlines and indentation for readability.
 #[must_use]
-pub fn generate_pretty(statement: &Statement, _dialect: Dialect) -> String {
-    let mut generator = Generator::pretty();
-    generator.generate(statement)
+pub fn generate_pretty(statement: &Statement, dialect: Dialect) -> String {
+    let mut generator = Generator::with_dialect(dialect);
+    generator.generate_pretty(statement)
 }
