@@ -654,6 +654,16 @@ pub fn transform(statement: &Statement, from: Dialect, to: Dialect) -> Statement
     if is_tsql_family(to) {
         fix_group_by_outer_refs_stmt(&mut stmt);
     }
+    // CR-031 (PSQ-3306/3307/3309): the shallow `transform_statement` pass only
+    // rewrites the outermost query block, so the LIMIT/OFFSET lowering, the
+    // no-op nested `ORDER BY` removal, and the aggregate `FILTER` lowering are
+    // skipped inside derived tables, CTEs, subqueries, and set-operation
+    // branches. This walk applies them at every level. It runs only for the
+    // T-SQL family and Oracle — the sole targets that need these rewrites — so
+    // every other dialect pair is left byte-for-byte unchanged.
+    if is_tsql_family(to) || matches!(to, Dialect::Oracle) {
+        transform_nested_blocks(&mut stmt, to, false);
+    }
     stmt
 }
 
@@ -1048,6 +1058,313 @@ fn columns_match(a: &Expr, b: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CR-031 (PSQ-3306 / PSQ-3307 / PSQ-3309): nested-block dialect transforms
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `transform_statement` only rewrites the outermost query block, so three
+// PostgreSQL→backend conversions are silently skipped when the relevant clause
+// is nested inside a derived table, CTE, subquery, or set-operation branch:
+//
+//   1. PSQ-3306 — `LIMIT … OFFSET …` is not lowered to the target's `TOP` /
+//      `OFFSET … ROWS FETCH …` form, so T-SQL and Oracle reject the invalid
+//      `LIMIT … OFFSET … ROWS` hybrid the generator emits from the untouched
+//      PostgreSQL shape.
+//   2. PSQ-3307 — a *no-op* `ORDER BY` (one with no `TOP`/`LIMIT`/`OFFSET`/
+//      `FETCH`) left in a derived table / subquery is rejected by SQL Server
+//      (error 1033). It cannot affect the outer result, so it is dropped for
+//      the T-SQL family; PostgreSQL and Oracle accept it and are left alone.
+//   3. PSQ-3309 (secondary) — an aggregate `FILTER (WHERE p)` is emitted
+//      verbatim; T-SQL and Oracle have no `FILTER` clause and reject it, so it
+//      is lowered to the equivalent `agg(CASE WHEN p THEN … END)`.
+//
+// The walk mirrors the CR-027 `fix_group_by_outer_refs_stmt` deep walk (the
+// crate's established pattern for reaching nested query blocks). `is_subquery`
+// is `false` for the top-level statement — whose outermost SELECT was already
+// handled by `transform_statement` — and becomes `true` as soon as the walk
+// descends into any nested block, which is where the LIMIT/OFFSET and ORDER BY
+// rewrites apply. The FILTER lowering applies at every level.
+
+/// Recursively apply the CR-031 nested-block transforms to every query block
+/// reachable from `stmt`.
+fn transform_nested_blocks(stmt: &mut Statement, target: Dialect, is_subquery: bool) {
+    match stmt {
+        Statement::Select(sel) => transform_nested_select(sel, target, is_subquery),
+        Statement::SetOperation(setop) => {
+            transform_nested_blocks(&mut setop.left, target, true);
+            transform_nested_blocks(&mut setop.right, target, true);
+        }
+        Statement::Insert(ins) => {
+            if let InsertSource::Query(query) = &mut ins.source {
+                transform_nested_blocks(query, target, true);
+            }
+        }
+        Statement::CreateTable(ct) => {
+            if let Some(as_select) = &mut ct.as_select {
+                transform_nested_blocks(as_select, target, true);
+            }
+        }
+        Statement::CreateView(view) => transform_nested_blocks(&mut view.query, target, true),
+        Statement::Explain(explain) => {
+            transform_nested_blocks(&mut explain.statement, target, true);
+        }
+        _ => {}
+    }
+}
+
+/// Descend into a SELECT's nested statements, then apply the three CR-031
+/// rewrites to this node.
+fn transform_nested_select(sel: &mut SelectStatement, target: Dialect, is_subquery: bool) {
+    // Recurse into nested statements first (CTEs, derived tables, JOINs, and any
+    // subqueries embedded in projections / predicates / ORDER BY).
+    for cte in &mut sel.ctes {
+        transform_nested_blocks(&mut cte.query, target, true);
+    }
+    if let Some(from) = &mut sel.from {
+        transform_nested_table_source(&mut from.source, target);
+    }
+    for join in &mut sel.joins {
+        transform_nested_table_source(&mut join.table, target);
+        if let Some(on) = &mut join.on {
+            transform_nested_in_expr(on, target);
+        }
+    }
+    for item in &mut sel.columns {
+        if let SelectItem::Expr { expr, .. } = item {
+            transform_nested_in_expr(expr, target);
+        }
+    }
+    if let Some(where_clause) = &mut sel.where_clause {
+        transform_nested_in_expr(where_clause, target);
+    }
+    for gb in &mut sel.group_by {
+        transform_nested_in_expr(gb, target);
+    }
+    if let Some(having) = &mut sel.having {
+        transform_nested_in_expr(having, target);
+    }
+    if let Some(qualify) = &mut sel.qualify {
+        transform_nested_in_expr(qualify, target);
+    }
+    for order in &mut sel.order_by {
+        transform_nested_in_expr(&mut order.expr, target);
+    }
+
+    // Fix 1 (PSQ-3306): lower LIMIT / OFFSET for a *nested* SELECT. The
+    // outermost SELECT was already handled by `transform_statement`, so only
+    // nested blocks are touched here — avoiding a double application.
+    if is_subquery {
+        transform_limit(sel, target);
+    }
+
+    // Fix 2 (PSQ-3307): drop a no-op `ORDER BY` in a nested T-SQL block. This
+    // runs *after* `transform_limit`, so a paginated subquery — now carrying
+    // `TOP` or `OFFSET`/`FETCH` — keeps its `ORDER BY`; only an `ORDER BY` with
+    // no row-limiting clause (which cannot affect the outer result) is removed.
+    if is_subquery
+        && is_tsql_family(target)
+        && !sel.order_by.is_empty()
+        && sel.top.is_none()
+        && sel.limit.is_none()
+        && sel.offset.is_none()
+        && sel.fetch_first.is_none()
+    {
+        sel.order_by.clear();
+    }
+
+    // Fix 3 (PSQ-3309, secondary): lower aggregate `FILTER (WHERE p)` for the
+    // T-SQL family and Oracle at every level (the outermost SELECT included,
+    // since `transform_expr` does not lower `FILTER`).
+    lower_agg_filter_in_select(sel);
+}
+
+/// Recurse into a table source, descending into derived-table subqueries.
+fn transform_nested_table_source(source: &mut TableSource, target: Dialect) {
+    match source {
+        TableSource::Subquery { query, .. } => transform_nested_blocks(query, target, true),
+        TableSource::Lateral { source } => transform_nested_table_source(source, target),
+        TableSource::Pivot { source, .. } | TableSource::Unpivot { source, .. } => {
+            transform_nested_table_source(source, target);
+        }
+        TableSource::Table(_) | TableSource::TableFunction { .. } | TableSource::Unnest { .. } => {}
+    }
+}
+
+/// Recurse into every subquery embedded anywhere in `expr`. Structural
+/// recursion through composite expressions is handled by [`Expr::transform`];
+/// this only needs to intercept the three statement-bearing variants (the same
+/// technique as the CR-027 walk).
+fn transform_nested_in_expr(expr: &mut Expr, target: Dialect) {
+    let taken = std::mem::replace(expr, Expr::Null);
+    *expr = taken.transform(&|e| match e {
+        Expr::Subquery(mut query) => {
+            transform_nested_blocks(&mut query, target, true);
+            Expr::Subquery(query)
+        }
+        Expr::Exists {
+            mut subquery,
+            negated,
+        } => {
+            transform_nested_blocks(&mut subquery, target, true);
+            Expr::Exists { subquery, negated }
+        }
+        Expr::InSubquery {
+            expr,
+            mut subquery,
+            negated,
+        } => {
+            transform_nested_blocks(&mut subquery, target, true);
+            Expr::InSubquery {
+                expr,
+                subquery,
+                negated,
+            }
+        }
+        other => other,
+    });
+}
+
+// ── Fix 3: aggregate FILTER (WHERE p) → agg(CASE WHEN p THEN … END) ──────────
+
+/// Lower every aggregate `FILTER (WHERE p)` in this SELECT's own expressions
+/// (projection, `HAVING`, `QUALIFY`, `ORDER BY`) to the `CASE`-wrapped form.
+/// Subqueries are visited by the surrounding walk, so [`Expr::transform`]
+/// (which does not cross into `Box<Statement>`) is exactly the right traversal.
+fn lower_agg_filter_in_select(sel: &mut SelectStatement) {
+    for item in &mut sel.columns {
+        if let SelectItem::Expr { expr, .. } = item {
+            lower_agg_filter_in_expr(expr);
+        }
+    }
+    if let Some(having) = &mut sel.having {
+        lower_agg_filter_in_expr(having);
+    }
+    if let Some(qualify) = &mut sel.qualify {
+        lower_agg_filter_in_expr(qualify);
+    }
+    for order in &mut sel.order_by {
+        lower_agg_filter_in_expr(&mut order.expr);
+    }
+}
+
+fn lower_agg_filter_in_expr(expr: &mut Expr) {
+    let taken = std::mem::replace(expr, Expr::Null);
+    *expr = taken.transform(&lower_agg_filter_node);
+}
+
+/// Rewrite a single aggregate node that carries a `filter` into the
+/// `CASE`-wrapped, filter-free form. Nodes without a `filter` — and typed
+/// aggregates the wrapper does not recognise — are returned unchanged (the
+/// latter keep their `filter` rather than silently dropping it).
+fn lower_agg_filter_node(e: Expr) -> Expr {
+    match e {
+        Expr::Function {
+            name,
+            args,
+            distinct,
+            filter: Some(pred),
+            over,
+            order_by,
+            within_group,
+        } => Expr::Function {
+            name,
+            args: case_wrap_agg_args(args, &pred),
+            distinct,
+            filter: None,
+            over,
+            order_by,
+            within_group,
+        },
+        Expr::TypedFunction {
+            func,
+            filter: Some(pred),
+            over,
+        } => match case_wrap_typed_agg(func, &pred) {
+            Ok(func) => Expr::TypedFunction {
+                func,
+                filter: None,
+                over,
+            },
+            Err(func) => Expr::TypedFunction {
+                func,
+                filter: Some(pred),
+                over,
+            },
+        },
+        other => other,
+    }
+}
+
+/// Build `CASE WHEN <pred> THEN <then> END`.
+fn case_when(pred: &Expr, then: Expr) -> Expr {
+    Expr::Case {
+        operand: None,
+        when_clauses: vec![(pred.clone(), then)],
+        else_clause: None,
+    }
+}
+
+/// Wrap the value argument of a generic aggregate in a filtering `CASE`.
+/// `COUNT(*)` (a `Wildcard` or empty argument list) becomes
+/// `COUNT(CASE WHEN p THEN 1 END)`; any other single argument `x` becomes
+/// `agg(CASE WHEN p THEN x END)`. For a multi-argument aggregate such as
+/// `STRING_AGG(x, ',')` only the first argument — the value being aggregated —
+/// is wrapped, matching the standard conditional-aggregation lowering.
+fn case_wrap_agg_args(mut args: Vec<Expr>, pred: &Expr) -> Vec<Expr> {
+    if args.is_empty() {
+        return vec![case_when(pred, Expr::Number("1".to_string()))];
+    }
+    if matches!(args[0], Expr::Wildcard) {
+        args[0] = case_when(pred, Expr::Number("1".to_string()));
+    } else {
+        let first = std::mem::replace(&mut args[0], Expr::Null);
+        args[0] = case_when(pred, first);
+    }
+    args
+}
+
+/// Wrap the argument of a typed aggregate in a filtering `CASE`. `COUNT(*)`
+/// becomes `COUNT(CASE WHEN p THEN 1 END)`; every other single-argument
+/// aggregate `agg(x)` becomes `agg(CASE WHEN p THEN x END)`. Returns `Err`
+/// (with the function unchanged) for typed functions that are not
+/// single-argument aggregates, so their `filter` is preserved rather than
+/// dropped.
+fn case_wrap_typed_agg(func: TypedFunction, pred: &Expr) -> Result<TypedFunction, TypedFunction> {
+    let wrap = |expr: Box<Expr>| Box::new(case_when(pred, *expr));
+    Ok(match func {
+        TypedFunction::Count { expr, distinct } => TypedFunction::Count {
+            expr: if matches!(*expr, Expr::Wildcard) {
+                Box::new(case_when(pred, Expr::Number("1".to_string())))
+            } else {
+                wrap(expr)
+            },
+            distinct,
+        },
+        TypedFunction::Sum { expr, distinct } => TypedFunction::Sum {
+            expr: wrap(expr),
+            distinct,
+        },
+        TypedFunction::Avg { expr, distinct } => TypedFunction::Avg {
+            expr: wrap(expr),
+            distinct,
+        },
+        TypedFunction::Min { expr } => TypedFunction::Min { expr: wrap(expr) },
+        TypedFunction::Max { expr } => TypedFunction::Max { expr: wrap(expr) },
+        TypedFunction::ArrayAgg { expr, distinct } => TypedFunction::ArrayAgg {
+            expr: wrap(expr),
+            distinct,
+        },
+        TypedFunction::ApproxDistinct { expr } => {
+            TypedFunction::ApproxDistinct { expr: wrap(expr) }
+        }
+        TypedFunction::Variance { expr } => TypedFunction::Variance { expr: wrap(expr) },
+        TypedFunction::VariancePop { expr } => TypedFunction::VariancePop { expr: wrap(expr) },
+        TypedFunction::Stddev { expr } => TypedFunction::Stddev { expr: wrap(expr) },
+        TypedFunction::StddevPop { expr } => TypedFunction::StddevPop { expr: wrap(expr) },
+        other => return Err(other),
+    })
 }
 
 /// Returns `true` when `expr` is already a zero-guarded divisor — either an

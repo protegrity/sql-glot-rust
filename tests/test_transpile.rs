@@ -4195,3 +4195,277 @@ fn cr030_control_clickhouse_array_subscript_preserved() {
         Dialect::ClickHouse,
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-031 (PSQ-3306 / PSQ-3307 / PSQ-3309): dialect transforms inside nested
+// query blocks. `transform_statement` only rewrote the outermost SELECT, so
+// LIMIT/OFFSET lowering, no-op nested ORDER BY removal, and aggregate FILTER
+// lowering were skipped inside derived tables, CTEs, subqueries, and set-op
+// branches. The CR-031 walk applies them at every level for the T-SQL family
+// and Oracle. (Doc filed as "CR-030" upstream, but that number shipped for the
+// bracket-identifier fix in v0.10.20, so these artifacts use CR-031.)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Fix 1 (PSQ-3306): nested LIMIT / OFFSET ─────────────────────────────────
+
+#[test]
+fn cr031_nested_limit_offset_tsql() {
+    // A paginated derived table lowers to OFFSET ... ROWS FETCH NEXT ... ROWS ONLY.
+    validate_with_dialect(
+        "SELECT count(*) FROM (SELECT id FROM t ORDER BY id LIMIT 100 OFFSET 100) x",
+        "SELECT COUNT(*) FROM (SELECT id FROM t ORDER BY id OFFSET 100 ROWS FETCH NEXT 100 ROWS ONLY) AS x",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_nested_limit_offset_oracle() {
+    validate_with_dialect(
+        "SELECT count(*) FROM (SELECT id FROM t ORDER BY id LIMIT 100 OFFSET 100) x",
+        "SELECT COUNT(*) FROM (SELECT id FROM t ORDER BY id OFFSET 100 ROWS FETCH FIRST 100 ROWS ONLY) x",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr031_nested_limit_only_tsql() {
+    // LIMIT with no OFFSET lowers to TOP inside the derived table.
+    validate_with_dialect(
+        "SELECT count(*) FROM (SELECT id FROM t ORDER BY id LIMIT 100) x",
+        "SELECT COUNT(*) FROM (SELECT TOP 100 id FROM t ORDER BY id) AS x",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_nested_limit_only_oracle() {
+    // Oracle uses FETCH FIRST (no TOP) for a LIMIT-only nested block.
+    validate_with_dialect(
+        "SELECT count(*) FROM (SELECT id FROM t LIMIT 5) x",
+        "SELECT COUNT(*) FROM (SELECT id FROM t FETCH FIRST 5 ROWS ONLY) x",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr031_scalar_subquery_limit_tsql() {
+    validate_with_dialect(
+        "SELECT a, (SELECT count(*) FROM u LIMIT 5) FROM t",
+        "SELECT a, (SELECT TOP 5 COUNT(*) FROM u) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_in_subquery_limit_tsql() {
+    validate_with_dialect(
+        "SELECT id FROM t WHERE id IN (SELECT id FROM u LIMIT 5)",
+        "SELECT id FROM t WHERE id IN (SELECT TOP 5 id FROM u)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_exists_subquery_limit_tsql() {
+    validate_with_dialect(
+        "SELECT id FROM t WHERE EXISTS (SELECT 1 FROM u LIMIT 5)",
+        "SELECT id FROM t WHERE EXISTS (SELECT TOP 5 1 FROM u)",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_setop_branches_limit_tsql() {
+    // Both UNION branches are rewritten (a top-level set-op is never visited by
+    // the shallow transform_statement pass at all).
+    validate_with_dialect(
+        "SELECT id FROM t LIMIT 5 UNION SELECT id FROM u LIMIT 5",
+        "SELECT TOP 5 id FROM t UNION SELECT TOP 5 id FROM u",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_cte_body_limit_tsql() {
+    validate_with_dialect(
+        "WITH c AS (SELECT id FROM t ORDER BY id LIMIT 5) SELECT * FROM c",
+        "WITH c AS (SELECT TOP 5 id FROM t ORDER BY id) SELECT * FROM c",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Fix 2 (PSQ-3307): no-op nested ORDER BY ─────────────────────────────────
+
+#[test]
+fn cr031_nested_orderby_no_limit_stripped_tsql() {
+    // An ORDER BY with no row-limiting clause cannot affect the outer result and
+    // is rejected by SQL Server in a derived table (error 1033) — so it is dropped.
+    validate_with_dialect(
+        "SELECT count(*) FROM (SELECT id FROM t WHERE c = 'x' ORDER BY id) x",
+        "SELECT COUNT(*) FROM (SELECT id FROM t WHERE c = 'x') AS x",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_nested_orderby_no_limit_preserved_oracle() {
+    // Oracle accepts a nested ORDER BY, so it must be left untouched.
+    validate_with_dialect(
+        "SELECT count(*) FROM (SELECT id FROM t WHERE c = 'x' ORDER BY id) x",
+        "SELECT COUNT(*) FROM (SELECT id FROM t WHERE c = 'x' ORDER BY id) x",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr031_setop_branch_orderby_stripped_tsql() {
+    validate_with_dialect(
+        "SELECT id FROM t ORDER BY id UNION SELECT id FROM u ORDER BY id",
+        "SELECT id FROM t UNION SELECT id FROM u",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Fix 3 (PSQ-3309, secondary): aggregate FILTER (WHERE p) lowering ─────────
+
+#[test]
+fn cr031_count_star_filter_tsql() {
+    validate_with_dialect(
+        "SELECT COUNT(*) FILTER (WHERE c = 'US') FROM t",
+        "SELECT COUNT(CASE WHEN c = 'US' THEN 1 END) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_count_star_filter_oracle() {
+    validate_with_dialect(
+        "SELECT COUNT(*) FILTER (WHERE c = 'US') FROM t",
+        "SELECT COUNT(CASE WHEN c = 'US' THEN 1 END) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr031_count_expr_filter_tsql() {
+    validate_with_dialect(
+        "SELECT COUNT(x) FILTER (WHERE c = 'US') FROM t",
+        "SELECT COUNT(CASE WHEN c = 'US' THEN x END) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_sum_filter_oracle() {
+    validate_with_dialect(
+        "SELECT SUM(x) FILTER (WHERE c = 'US') FROM t",
+        "SELECT SUM(CASE WHEN c = 'US' THEN x END) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr031_distinct_filter_tsql() {
+    // DISTINCT is preserved through the CASE lowering.
+    validate_with_dialect(
+        "SELECT COUNT(DISTINCT x) FILTER (WHERE c = 'US') FROM t",
+        "SELECT COUNT(DISTINCT CASE WHEN c = 'US' THEN x END) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_filter_in_having_tsql() {
+    validate_with_dialect(
+        "SELECT dept FROM t GROUP BY dept HAVING COUNT(*) FILTER (WHERE c = 'US') > 5",
+        "SELECT dept FROM t GROUP BY dept HAVING COUNT(CASE WHEN c = 'US' THEN 1 END) > 5",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_nested_filter_derived_table_tsql() {
+    // FILTER lowering also reaches aggregates inside a derived table.
+    validate_with_dialect(
+        "SELECT * FROM (SELECT COUNT(*) FILTER (WHERE c = 'US') AS n FROM t) z",
+        "SELECT * FROM (SELECT COUNT(CASE WHEN c = 'US' THEN 1 END) AS n FROM t) AS z",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_filter_preserved_postgres() {
+    // PostgreSQL supports FILTER — it must be preserved.
+    validate_with_dialect(
+        "SELECT COUNT(*) FILTER (WHERE c = 'US') FROM t",
+        "SELECT COUNT(*) FILTER (WHERE c = 'US') FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+// ── Controls: top-level behaviour and non-target dialects unchanged ─────────
+
+#[test]
+fn cr031_control_top_level_orderby_preserved_tsql() {
+    // A top-level ORDER BY is meaningful and must never be stripped.
+    validate_with_dialect(
+        "SELECT id FROM t ORDER BY id",
+        "SELECT id FROM t ORDER BY id",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_control_top_level_limit_offset_unchanged_tsql() {
+    // Regression guard for CR-010 / CR-013: top-level LIMIT/OFFSET is unchanged.
+    validate_with_dialect(
+        "SELECT customer_id FROM customers ORDER BY customer_id LIMIT 100 OFFSET 100",
+        "SELECT customer_id FROM customers ORDER BY customer_id OFFSET 100 ROWS FETCH NEXT 100 ROWS ONLY",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+#[test]
+fn cr031_control_non_target_dialect_filter_preserved() {
+    // A dialect that supports FILTER (DuckDB) is outside the CR-031 gate and is
+    // left byte-for-byte unchanged.
+    validate_with_dialect(
+        "SELECT COUNT(*) FILTER (WHERE c = 'US') FROM t",
+        "SELECT COUNT(*) FILTER (WHERE c = 'US') FROM t",
+        Dialect::Postgres,
+        Dialect::DuckDb,
+    );
+}
+
+#[test]
+fn cr031_control_non_target_dialect_nested_limit_untouched() {
+    // Nested LIMIT is preserved for a non-target dialect (DuckDB supports it).
+    validate_with_dialect(
+        "SELECT n FROM (SELECT id AS n FROM t LIMIT 5) z",
+        "SELECT n FROM (SELECT id AS n FROM t LIMIT 5) AS z",
+        Dialect::Postgres,
+        Dialect::DuckDb,
+    );
+}
