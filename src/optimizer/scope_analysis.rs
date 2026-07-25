@@ -354,7 +354,14 @@ fn process_table_source(source: &TableSource, scope: &mut Scope) {
                 .as_deref()
                 .unwrap_or(&table_ref.name)
                 .to_string();
-            scope.sources.insert(key, Source::Table(table_ref.clone()));
+            let source = match (
+                table_ref.catalog.is_none() && table_ref.schema.is_none(),
+                scope.sources.get(&table_ref.name),
+            ) {
+                (true, Some(Source::Scope(cte_scope))) => Source::Scope(cte_scope.clone()),
+                _ => Source::Table(table_ref.clone()),
+            };
+            scope.sources.insert(key, source);
         }
         TableSource::Subquery { query, alias, .. } => {
             let mut dt_scope = Scope::new(ScopeType::DerivedTable);
@@ -744,11 +751,27 @@ mod tests {
     fn test_cte_scope() {
         let scope = scope_for("WITH cte AS (SELECT id FROM t) SELECT cte.id FROM cte");
         assert!(scope.sources.contains_key("cte"));
+        assert!(matches!(scope.sources["cte"], Source::Scope(_)));
         assert_eq!(scope.cte_scopes.len(), 1);
 
         let cte = &scope.cte_scopes[0];
         assert_eq!(cte.scope_type, ScopeType::Cte);
         assert!(cte.sources.contains_key("t"));
+    }
+
+    #[test]
+    fn test_aliased_cte_source() {
+        let scope = scope_for("WITH cte AS (SELECT id FROM t) SELECT c.id FROM cte AS c");
+        assert!(matches!(scope.sources["cte"], Source::Scope(_)));
+        assert!(matches!(scope.sources["c"], Source::Scope(_)));
+        assert!(scope.selected_sources.contains_key("c"));
+    }
+
+    #[test]
+    fn test_qualified_table_does_not_resolve_to_cte() {
+        let scope =
+            scope_for("WITH cards AS (SELECT id FROM t) SELECT public.cards.id FROM public.cards");
+        assert!(matches!(scope.sources["cards"], Source::Table(_)));
     }
 
     #[test]
