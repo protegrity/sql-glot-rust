@@ -119,8 +119,7 @@ pub use optimizer::lineage::{
 };
 pub use optimizer::pushdown_predicates::pushdown_predicates;
 pub use optimizer::scope_analysis::{Scope, ScopeType, build_scope, find_all_in_scope};
-pub use parser::parse;
-pub use parser::{parse_statements_with_comments, parse_with_comments};
+pub use parser::{parse, parse_data_type, parse_statements_with_comments, parse_with_comments};
 pub use planner::{Plan, Projection, Step, StepId, plan};
 
 /// Validate that a transformed AST doesn't contain constructs unsupported by the target dialect.
