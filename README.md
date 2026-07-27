@@ -358,8 +358,35 @@ const char *sqlglot_version(void);
 char *sqlglot_parse(const char *sql, const char *dialect);
 char *sqlglot_transpile(const char *sql, const char *from_dialect, const char *to_dialect);
 char *sqlglot_generate(const char *ast_json, const char *dialect);
-void  sqlglot_free(char *ptr);   /* must be called on every non-NULL return */
+char *sqlglot_qualify_columns(const char *ast_json, const char *schema_json, const char *dialect);
+char *sqlglot_build_scope(const char *ast_json);
+char *sqlglot_lineage(
+    const char *column,
+    const char *ast_json,
+    const char *schema_json,
+    const char *config_json
+);
+void  sqlglot_free(char *ptr);   /* releases an owned API result; NULL-safe */
 ```
+
+Schema-aware calls accept an ordered table-path transport:
+
+```json
+{
+  "tables": [
+    {
+      "path": ["public", "cards"],
+      "columns": [
+        {"name": "id", "data_type": "BIGINT"},
+        {"name": "amount", "data_type": "DECIMAL(18, 4)"}
+      ]
+    }
+  ]
+}
+```
+
+Identifier path components are explicit, column order is retained for wildcard
+expansion, and `data_type` uses the parser's SQL data-type grammar.
 
 ### C usage example
 

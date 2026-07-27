@@ -5,14 +5,18 @@
 //!
 //! # Memory management
 //!
-//! Every `*mut c_char` returned by a function in this module **must** be freed
-//! by calling [`sqlglot_free`]. Failing to do so will leak memory.
+//! The caller owns every non-null `*mut c_char` returned by this API and must
+//! release it with [`sqlglot_free`]. [`sqlglot_version`] returns a borrowed
+//! pointer to static storage and must not be freed.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 
 use crate::dialects::Dialect;
+
+mod semantics;
+pub use semantics::{sqlglot_build_scope, sqlglot_lineage, sqlglot_qualify_columns};
 
 // ── helpers ──────────────────────────────────────────────────────────────
 

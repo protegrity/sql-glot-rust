@@ -82,6 +82,19 @@ impl Parser {
         })
     }
 
+    pub(crate) fn parse_data_type_expression(&mut self) -> Result<DataType> {
+        let data_type = self.parse_data_type()?;
+        if self.peek_type() != &TokenType::Eof {
+            return Err(SqlglotError::ParserError {
+                message: format!(
+                    "Expected end of data type, got {:?}",
+                    self.peek().token_type
+                ),
+            });
+        }
+        Ok(data_type)
+    }
+
     // ── Comment helpers ────────────────────────────────────────────
 
     /// Consume any comment tokens at the current position, accumulating
