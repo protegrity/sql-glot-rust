@@ -1750,6 +1750,7 @@ impl Generator {
             DataType::Geography => self.write("GEOGRAPHY"),
             DataType::Geometry => self.write("GEOMETRY"),
             DataType::Super => self.write("SUPER"),
+            DataType::Dialect { sql, .. } | DataType::UserDefined(sql) => self.write(sql),
             DataType::Unknown(name) => self.write(name),
         }
     }

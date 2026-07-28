@@ -192,6 +192,29 @@ impl Dialect {
         ]
     }
 
+    /// Whether schema parsing accepts user-defined data types.
+    #[must_use]
+    pub fn supports_user_defined_types(self) -> bool {
+        matches!(
+            self,
+            Dialect::Ansi
+                | Dialect::Athena
+                | Dialect::Druid
+                | Dialect::DuckDb
+                | Dialect::Fabric
+                | Dialect::Materialize
+                | Dialect::Oracle
+                | Dialect::Postgres
+                | Dialect::Presto
+                | Dialect::Prql
+                | Dialect::RisingWave
+                | Dialect::Sqlite
+                | Dialect::Tableau
+                | Dialect::Teradata
+                | Dialect::Tsql
+        )
+    }
+
     /// Parse a dialect name (case-insensitive) into a `Dialect`.
     pub fn from_str(s: &str) -> Option<Dialect> {
         match s.to_lowercase().as_str() {
