@@ -4469,3 +4469,406 @@ fn cr031_control_non_target_dialect_nested_limit_untouched() {
         Dialect::DuckDb,
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CR-032 (PSQ-3340 / PSQ-3341): Oracle CURRENT_TIMESTAMP, CAST data types,
+// interval literals, and AT TIME ZONE
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Change 1: CURRENT_TIMESTAMP must not carry empty parens on Oracle ────────
+
+#[test]
+fn cr032_oracle_now_emits_bare_current_timestamp() {
+    // `CURRENT_TIMESTAMP()` is parsed by Oracle as the precision-qualified form
+    // with a missing argument → ORA-30088.
+    validate_with_dialect(
+        "SELECT now()",
+        "SELECT CURRENT_TIMESTAMP FROM DUAL",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    validate_with_dialect(
+        "SELECT CURRENT_TIMESTAMP",
+        "SELECT CURRENT_TIMESTAMP FROM DUAL",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_current_timestamp_roundtrip() {
+    validate_with_dialect(
+        "SELECT CURRENT_TIMESTAMP FROM dual",
+        "SELECT CURRENT_TIMESTAMP FROM dual",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_current_date_and_time_controls() {
+    // The sibling arms already emitted the paren-less form; they stay untouched.
+    validate_with_dialect(
+        "SELECT CURRENT_DATE, CURRENT_TIME",
+        "SELECT CURRENT_DATE, CURRENT_TIME FROM DUAL",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_control_current_timestamp_other_dialects_unchanged() {
+    validate_with_dialect(
+        "SELECT now()",
+        "SELECT GETDATE()",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT now()",
+        "SELECT NOW()",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    // Snowflake and BigQuery accept (and canonically use) the parenthesised form.
+    validate_with_dialect(
+        "SELECT now()",
+        "SELECT CURRENT_TIMESTAMP()",
+        Dialect::Postgres,
+        Dialect::Snowflake,
+    );
+    validate_with_dialect(
+        "SELECT now()",
+        "SELECT CURRENT_TIMESTAMP()",
+        Dialect::Postgres,
+        Dialect::BigQuery,
+    );
+}
+
+// ── Change 2: gen_data_type Oracle arms ─────────────────────────────────────
+
+#[test]
+fn cr032_oracle_bigint_maps_to_number_19() {
+    // ORA-00902 "invalid datatype" for BIGINT.
+    validate_with_dialect(
+        "SELECT SUM(CAST(id AS bigint)) FROM transactions",
+        "SELECT SUM(CAST(id AS NUMBER(19))) FROM transactions",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    // The `::` spelling lowers to the same Cast node.
+    validate_with_dialect(
+        "SELECT id::bigint FROM transactions",
+        "SELECT CAST(id AS NUMBER(19)) FROM transactions",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_tinyint_maps_to_number_3() {
+    validate_with_dialect(
+        "SELECT CAST(x AS tinyint) FROM t",
+        "SELECT CAST(x AS NUMBER(3)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_double_maps_to_binary_double() {
+    // ORA-02000 "missing PRECISION keyword" for a bare DOUBLE.
+    validate_with_dialect(
+        "SELECT CAST(x AS double) FROM t",
+        "SELECT CAST(x AS BINARY_DOUBLE) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_text_and_string_map_to_varchar2_4000() {
+    // CLOB is rejected inside a CAST (ORA-22849), so the large-string types map
+    // to the widest non-extended VARCHAR2 instead.
+    validate_with_dialect(
+        "SELECT CAST(x AS text) FROM t",
+        "SELECT CAST(x AS VARCHAR2(4000)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    validate_with_dialect(
+        "SELECT CAST(x AS string) FROM t",
+        "SELECT CAST(x AS VARCHAR2(4000)) FROM t",
+        Dialect::Hive,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_lengthless_varchar_maps_to_varchar2_4000() {
+    // ORA-00906 "missing left parenthesis" for a bare VARCHAR.
+    validate_with_dialect(
+        "SELECT CAST(x AS varchar) FROM t",
+        "SELECT CAST(x AS VARCHAR2(4000)) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_varchar_max_maps_to_varchar2() {
+    validate_with_dialect(
+        "SELECT CAST(x AS varchar(max)) FROM t",
+        "SELECT CAST(x AS VARCHAR2(4000)) FROM t",
+        Dialect::Tsql,
+        Dialect::Oracle,
+    );
+    validate_with_dialect(
+        "SELECT CAST(x AS nvarchar(max)) FROM t",
+        "SELECT CAST(x AS NVARCHAR2(2000)) FROM t",
+        Dialect::Tsql,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_control_oracle_accepted_types_untouched() {
+    // Types Oracle already accepts are deliberately left alone.
+    for (src, expected) in [
+        ("smallint", "SMALLINT"),
+        ("int", "INT"),
+        ("real", "REAL"),
+        ("float", "FLOAT"),
+        ("char(3)", "CHAR(3)"),
+        ("varchar(10)", "VARCHAR(10)"),
+    ] {
+        validate_with_dialect(
+            &format!("SELECT CAST(x AS {src}) FROM t"),
+            &format!("SELECT CAST(x AS {expected}) FROM t"),
+            Dialect::Postgres,
+            Dialect::Oracle,
+        );
+    }
+}
+
+#[test]
+fn cr032_control_oracle_varchar2_length_preserved() {
+    // CR-026 regression control.
+    validate_with_dialect(
+        "SELECT CAST(x AS varchar2(10)) FROM t",
+        "SELECT CAST(x AS VARCHAR2(10)) FROM t",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_control_non_oracle_data_types_untouched() {
+    validate_with_dialect(
+        "SELECT CAST(id AS bigint) FROM t",
+        "SELECT id::BIGINT FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT CAST(id AS bigint) FROM t",
+        "SELECT CAST(id AS BIGINT) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT CAST(x AS text) FROM t",
+        "SELECT CAST(x AS VARCHAR(MAX)) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+}
+
+// ── Change 3: PG-form interval literals → Oracle functional intervals ───────
+
+#[test]
+fn cr032_oracle_interval_day_uses_numtodsinterval() {
+    // ORA-30089 for `INTERVAL '30 day'`; the ANSI form `INTERVAL '30' DAY` is
+    // valid but precision-limited, so the functional form is used instead.
+    validate_with_dialect(
+        "SELECT COUNT(*) FROM transactions WHERE created_at > now() - INTERVAL '30 day'",
+        "SELECT COUNT(*) FROM transactions WHERE created_at > CURRENT_TIMESTAMP - NUMTODSINTERVAL(30, 'DAY')",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    // Plural spelling normalizes identically.
+    validate_with_dialect(
+        "SELECT ts - INTERVAL '30 days' FROM t",
+        "SELECT ts - NUMTODSINTERVAL(30, 'DAY') FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_interval_large_magnitude_avoids_ora_01873() {
+    // Oracle's default DAY leading precision is 2 digits, so the ANSI form
+    // `INTERVAL '36500' DAY` raises ORA-01873. NUMTODSINTERVAL has no such cap.
+    validate_with_dialect(
+        "SELECT COUNT(*) FROM transactions WHERE created_at > now() - INTERVAL '36500 day'",
+        "SELECT COUNT(*) FROM transactions WHERE created_at > CURRENT_TIMESTAMP - NUMTODSINTERVAL(36500, 'DAY')",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_interval_time_units_use_numtodsinterval() {
+    for (unit, expected) in [
+        ("3 hour", "NUMTODSINTERVAL(3, 'HOUR')"),
+        ("15 minute", "NUMTODSINTERVAL(15, 'MINUTE')"),
+        ("45 second", "NUMTODSINTERVAL(45, 'SECOND')"),
+        // A week is a day-to-second interval in Oracle; the count is scaled.
+        ("2 week", "NUMTODSINTERVAL(14, 'DAY')"),
+    ] {
+        validate_with_dialect(
+            &format!("SELECT ts - INTERVAL '{unit}' FROM t"),
+            &format!("SELECT ts - {expected} FROM t"),
+            Dialect::Postgres,
+            Dialect::Oracle,
+        );
+    }
+}
+
+#[test]
+fn cr032_oracle_interval_year_month_use_numtoyminterval() {
+    validate_with_dialect(
+        "SELECT ts - INTERVAL '2 month' FROM t",
+        "SELECT ts - NUMTOYMINTERVAL(2, 'MONTH') FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    validate_with_dialect(
+        "SELECT ts - INTERVAL '1 year' FROM t",
+        "SELECT ts - NUMTOYMINTERVAL(1, 'YEAR') FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_interval_ansi_numeric_form_is_lowered() {
+    // `INTERVAL '7' DAY` (value + unit field) reaches the same lowering.
+    validate_with_dialect(
+        "SELECT ts + INTERVAL '7' DAY FROM t",
+        "SELECT ts + NUMTODSINTERVAL(7, 'DAY') FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    // QUARTER has no Oracle interval unit; it is scaled to months.
+    validate_with_dialect(
+        "SELECT ts + INTERVAL '1' QUARTER FROM t",
+        "SELECT ts + NUMTOYMINTERVAL(3, 'MONTH') FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_oracle_unsupported_interval_unit_is_not_rewritten() {
+    // Sub-second units have no exact integer NUMTODSINTERVAL form. They are
+    // forwarded unchanged so Oracle rejects the statement rather than silently
+    // applying a different offset.
+    validate_with_dialect(
+        "SELECT ts - INTERVAL '500 millisecond' FROM t",
+        "SELECT ts - INTERVAL '500 millisecond' FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_control_oracle_standalone_interval_literal_untouched() {
+    // Only interval operands of `+`/`-` are lowered; a bare literal round-trips.
+    validate_with_dialect(
+        "SELECT INTERVAL '1' DAY FROM dual",
+        "SELECT INTERVAL '1' DAY FROM dual",
+        Dialect::Oracle,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_control_interval_other_dialects_untouched() {
+    // The T-SQL DATEADD lowering (CR-006 "Change 6") is unchanged.
+    validate_with_dialect(
+        "SELECT ts - INTERVAL '1' HOUR FROM t",
+        "SELECT DATEADD(HOUR, -1, ts) FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT ts - INTERVAL '30 day' FROM t",
+        "SELECT ts - INTERVAL '30 day' FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+// ── Change 4: AT TIME ZONE is modelled instead of discarded ─────────────────
+
+#[test]
+fn cr032_at_time_zone_preserved_postgres_roundtrip() {
+    // Previously the whole suffix was parsed and thrown away, silently changing
+    // the result set on every target — including Postgres → Postgres.
+    validate_with_dialect(
+        "SELECT COUNT(*) FROM t WHERE created_at AT TIME ZONE 'UTC' < now()",
+        "SELECT COUNT(*) FROM t WHERE created_at AT TIME ZONE 'UTC' < NOW()",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}
+
+#[test]
+fn cr032_at_time_zone_preserved_for_tsql_and_duckdb() {
+    validate_with_dialect(
+        "SELECT ts AT TIME ZONE 'UTC' FROM t",
+        "SELECT ts AT TIME ZONE 'UTC' FROM t",
+        Dialect::Postgres,
+        Dialect::Tsql,
+    );
+    validate_with_dialect(
+        "SELECT ts AT TIME ZONE 'UTC' FROM t",
+        "SELECT ts AT TIME ZONE 'UTC' FROM t",
+        Dialect::Postgres,
+        Dialect::DuckDb,
+    );
+}
+
+#[test]
+fn cr032_at_time_zone_oracle_uses_from_tz() {
+    // Oracle has no AT TIME ZONE operator.
+    validate_with_dialect(
+        "SELECT COUNT(*) FROM t WHERE created_at AT TIME ZONE 'UTC' < now()",
+        "SELECT COUNT(*) FROM t WHERE FROM_TZ(CAST(created_at AS TIMESTAMP), 'UTC') < CURRENT_TIMESTAMP",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+    validate_with_dialect(
+        "SELECT CAST(ts AT TIME ZONE 'UTC' AS DATE) FROM t",
+        "SELECT CAST(FROM_TZ(CAST(ts AS TIMESTAMP), 'UTC') AS DATE) FROM t",
+        Dialect::Postgres,
+        Dialect::Oracle,
+    );
+}
+
+#[test]
+fn cr032_at_time_zone_non_literal_zone_and_chaining() {
+    validate_with_dialect(
+        "SELECT ts AT TIME ZONE tz_col FROM t",
+        "SELECT ts AT TIME ZONE tz_col FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT ts AT TIME ZONE 'UTC' AT TIME ZONE 'EST' FROM t",
+        "SELECT ts AT TIME ZONE 'UTC' AT TIME ZONE 'EST' FROM t",
+        Dialect::Postgres,
+        Dialect::Postgres,
+    );
+}

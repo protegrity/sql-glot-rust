@@ -1389,7 +1389,9 @@ fn test_validate_all_now_writes() {
             (Dialect::Trino, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Athena, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::ClickHouse, "SELECT CURRENT_TIMESTAMP()"),
-            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP() FROM DUAL"),
+            // CR-032: Oracle reads `CURRENT_TIMESTAMP()` as a precision-qualified
+            // call with a missing argument (ORA-30088); only the bare keyword works.
+            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP FROM DUAL"),
             (Dialect::Exasol, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Teradata, "SELECT CURRENT_TIMESTAMP()"),
             // → GETDATE
@@ -1416,7 +1418,7 @@ fn test_validate_all_getdate_writes() {
             (Dialect::Snowflake, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Hive, "SELECT CURRENT_TIMESTAMP()"),
             (Dialect::Presto, "SELECT CURRENT_TIMESTAMP()"),
-            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP() FROM DUAL"),
+            (Dialect::Oracle, "SELECT CURRENT_TIMESTAMP FROM DUAL"),
         ],
     );
 }
@@ -2113,7 +2115,7 @@ fn test_validate_all_compound_query() {
             ),
             (
                 Dialect::Oracle,
-                "SELECT COALESCE(SUBSTR(CAST(x AS TEXT), 1, 3), 'none') FROM t",
+                "SELECT COALESCE(SUBSTR(CAST(x AS VARCHAR2(4000)), 1, 3), 'none') FROM t",
             ),
         ],
     );

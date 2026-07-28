@@ -1530,6 +1530,29 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
                 }
             }
 
+            // Change 8 (CR-032): expr ± INTERVAL → expr ± NUMTODSINTERVAL() /
+            // NUMTOYMINTERVAL() for Oracle. The PostgreSQL spelling
+            // `INTERVAL '30 day'` keeps the quantity and the unit inside the
+            // string literal, which Oracle rejects with ORA-30089 ("missing or
+            // invalid <datetime field>") — its ANSI form needs the unit outside
+            // the quotes. That ANSI form is itself a trap: the default leading
+            // precision for DAY is two digits, so `INTERVAL '36500' DAY` raises
+            // ORA-01873 unless an explicit DAY(n) is computed from the literal.
+            // The functional NUMTODSINTERVAL / NUMTOYMINTERVAL forms carry no
+            // such limit, so they are emitted instead. Interval operands that
+            // cannot be lowered exactly are left untouched rather than being
+            // silently reinterpreted.
+            if matches!(target, Dialect::Oracle)
+                && matches!(op, BinaryOperator::Plus | BinaryOperator::Minus)
+                && let Some(lowered) = try_transform_interval_arithmetic_oracle(
+                    &left_transformed,
+                    &op,
+                    &right_transformed,
+                )
+            {
+                return lowered;
+            }
+
             // Change 7 (CR-019): a / b → a / NULLIF(b, 0) for the T-SQL family,
             // so a zero divisor yields NULL instead of raising "Divide by zero"
             // (code 8134). SQL Server does not short-circuit the ANDed WHERE qual
@@ -2198,6 +2221,72 @@ fn try_transform_interval_arithmetic(
     }
 
     None
+}
+
+/// Try to lower `expr ± INTERVAL 'n unit'` into `expr ± NUMTODSINTERVAL(n, 'UNIT')`
+/// (or `NUMTOYMINTERVAL` for year/month units) for Oracle. The operator is kept
+/// as-is and only the interval operand is rewritten.
+///
+/// Returns `None` when either side is not an interval literal, or when the unit
+/// has no exact functional Oracle equivalent — in that case the expression is
+/// forwarded unchanged so Oracle rejects it outright instead of silently
+/// computing a different offset.
+fn try_transform_interval_arithmetic_oracle(
+    left: &Expr,
+    op: &BinaryOperator,
+    right: &Expr,
+) -> Option<Expr> {
+    if let Expr::Interval { value, unit } = right {
+        let (count, unit_name) = parse_interval_value(value, unit)?;
+        return Some(Expr::BinaryOp {
+            left: Box::new(left.clone()),
+            op: op.clone(),
+            right: Box::new(oracle_interval_call(count, &unit_name)?),
+        });
+    }
+
+    // Less common: `INTERVAL '7 days' + col`. Subtraction is not mirrored — an
+    // interval minus a timestamp is not a valid Oracle expression.
+    if let Expr::Interval { value, unit } = left
+        && matches!(op, BinaryOperator::Plus)
+    {
+        let (count, unit_name) = parse_interval_value(value, unit)?;
+        return Some(Expr::BinaryOp {
+            left: Box::new(oracle_interval_call(count, &unit_name)?),
+            op: op.clone(),
+            right: Box::new(right.clone()),
+        });
+    }
+
+    None
+}
+
+/// Build the Oracle functional interval constructor for a normalized unit name.
+fn oracle_interval_call(count: i64, unit_name: &str) -> Option<Expr> {
+    let (name, unit, amount) = match unit_name {
+        "YEAR" => ("NUMTOYMINTERVAL", "YEAR", count),
+        "MONTH" => ("NUMTOYMINTERVAL", "MONTH", count),
+        "QUARTER" => ("NUMTOYMINTERVAL", "MONTH", count.checked_mul(3)?),
+        "DAY" => ("NUMTODSINTERVAL", "DAY", count),
+        "WEEK" => ("NUMTODSINTERVAL", "DAY", count.checked_mul(7)?),
+        "HOUR" => ("NUMTODSINTERVAL", "HOUR", count),
+        "MINUTE" => ("NUMTODSINTERVAL", "MINUTE", count),
+        "SECOND" => ("NUMTODSINTERVAL", "SECOND", count),
+        // MILLISECOND / MICROSECOND have no exact integer NUMTODSINTERVAL form.
+        _ => return None,
+    };
+    Some(Expr::Function {
+        name: name.to_string(),
+        args: vec![
+            Expr::Number(amount.to_string()),
+            Expr::StringLiteral(unit.to_string()),
+        ],
+        distinct: false,
+        filter: None,
+        over: None,
+        order_by: vec![],
+        within_group: false,
+    })
 }
 
 /// Parse an interval value expression and optional unit into (count, T-SQL datepart name).
