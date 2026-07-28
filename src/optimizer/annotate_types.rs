@@ -416,6 +416,10 @@ fn annotate_children<S: Schema>(
             annotate_expr(r#else, ctx, ann);
         }
         Expr::Collate { expr: e, .. } => annotate_expr(e, ctx, ann),
+        Expr::AtTimeZone { expr: e, zone } => {
+            annotate_expr(e, ctx, ann);
+            annotate_expr(zone, ctx, ann);
+        }
         Expr::Alias { expr: e, .. } => annotate_expr(e, ctx, ann),
         Expr::ArrayIndex { expr: e, index } => {
             annotate_expr(e, ctx, ann);
@@ -627,6 +631,12 @@ fn infer_type<S: Schema>(
 
         // ── Collate → Varchar ────────────────────────────────────────
         Expr::Collate { .. } => Some(DataType::Varchar(None)),
+
+        // ── AT TIME ZONE → timestamp with time zone ──────────────────
+        Expr::AtTimeZone { .. } => Some(DataType::Timestamp {
+            precision: None,
+            with_tz: true,
+        }),
 
         // ── TypeExpr ─────────────────────────────────────────────────
         Expr::TypeExpr(dt) => Some(dt.clone()),

@@ -581,6 +581,7 @@ pub struct AlterTableStatement {
 | `If` | `{ condition, true_val, false_val? }` | `IF(a > 0, a, 0)` |
 | `NullIf` | `{ expr, else }` | `NULLIF(a, b)` |
 | `Collate` | `{ expr, collation }` | `col COLLATE utf8` |
+| `AtTimeZone` | `{ expr, zone }` | `ts AT TIME ZONE 'UTC'` |
 | `Parameter` | `(String)` | `$1`, `?`, `:name` |
 | `TypeExpr` | `(DataType)` | Used in DDL contexts |
 | `Alias` | `{ expr, name }` | `expr AS alias` |

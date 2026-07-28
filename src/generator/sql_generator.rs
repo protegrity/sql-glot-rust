@@ -1540,13 +1540,23 @@ impl Generator {
     // ══════════════════════════════════════════════════════════════
 
     fn gen_data_type(&mut self, dt: &DataType) {
+        // CR-032 Change 2: Oracle rejects several of the portable spellings below
+        // outright — `BIGINT`/`TINYINT`/`TEXT`/`STRING` raise ORA-00902 (invalid
+        // datatype), a length-less `VARCHAR` raises ORA-00906 (missing left
+        // parenthesis) and `DOUBLE` raises ORA-02000 (missing PRECISION keyword).
+        // `CLOB` is additionally rejected inside a CAST (ORA-22849), so the
+        // large-string forms map to VARCHAR2(4000) — 4000 is the maximum
+        // non-extended VARCHAR2 length; 8000 raises ORA-00910. Types Oracle
+        // already accepts (SMALLINT, INT, REAL, FLOAT, CHAR, NUMBER, BOOLEAN)
+        // are deliberately left untouched.
+        let is_oracle = matches!(self.dialect, Some(Dialect::Oracle));
         match dt {
-            DataType::TinyInt => self.write("TINYINT"),
+            DataType::TinyInt => self.write(if is_oracle { "NUMBER(3)" } else { "TINYINT" }),
             DataType::SmallInt => self.write("SMALLINT"),
             DataType::Int => self.write("INT"),
-            DataType::BigInt => self.write("BIGINT"),
+            DataType::BigInt => self.write(if is_oracle { "NUMBER(19)" } else { "BIGINT" }),
             DataType::Float => self.write("FLOAT"),
-            DataType::Double => self.write("DOUBLE"),
+            DataType::Double => self.write(if is_oracle { "BINARY_DOUBLE" } else { "DOUBLE" }),
             DataType::Real => self.write("REAL"),
             DataType::Decimal { precision, scale } | DataType::Numeric { precision, scale } => {
                 self.write(if matches!(dt, DataType::Numeric { .. }) {
@@ -1563,9 +1573,16 @@ impl Generator {
                 }
             }
             DataType::Varchar(len) => {
-                self.write("VARCHAR");
-                if let Some(n) = len {
-                    self.write(&format!("({n})"));
+                match (is_oracle, len) {
+                    // Oracle has no length-less VARCHAR (ORA-00906); fall back to
+                    // the maximum non-extended VARCHAR2 width.
+                    (true, None) => self.write("VARCHAR2(4000)"),
+                    _ => {
+                        self.write("VARCHAR");
+                        if let Some(n) = len {
+                            self.write(&format!("({n})"));
+                        }
+                    }
                 }
             }
             DataType::Char(len) => {
@@ -1574,8 +1591,12 @@ impl Generator {
                     self.write(&format!("({n})"));
                 }
             }
-            DataType::Text => self.write("TEXT"),
-            DataType::String => self.write("STRING"),
+            DataType::Text => self.write(if is_oracle { "VARCHAR2(4000)" } else { "TEXT" }),
+            DataType::String => self.write(if is_oracle {
+                "VARCHAR2(4000)"
+            } else {
+                "STRING"
+            }),
             DataType::Binary(len) => {
                 self.write("BINARY");
                 if let Some(n) = len {
@@ -1614,6 +1635,8 @@ impl Generator {
                 // to the MSSQL CAST default of 30.
                 if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
                     self.write("VARCHAR(MAX)");
+                } else if is_oracle {
+                    self.write("VARCHAR2(4000)");
                 } else {
                     self.write("TEXT");
                 }
@@ -1621,6 +1644,10 @@ impl Generator {
             DataType::NvarcharMax => {
                 if matches!(self.dialect, Some(Dialect::Tsql) | Some(Dialect::Fabric)) {
                     self.write("NVARCHAR(MAX)");
+                } else if is_oracle {
+                    // NVARCHAR2 is capped at 4000 bytes; 2000 characters is the
+                    // widest value that is always representable (AL16UTF16).
+                    self.write("NVARCHAR2(2000)");
                 } else {
                     self.write("TEXT");
                 }
@@ -1628,7 +1655,6 @@ impl Generator {
             DataType::Varchar2(len) => {
                 // Oracle's canonical variable-length string. Spelled VARCHAR2
                 // only for Oracle; every other dialect uses portable VARCHAR.
-                let is_oracle = matches!(self.dialect, Some(Dialect::Oracle));
                 self.write(if is_oracle { "VARCHAR2" } else { "VARCHAR" });
                 if let Some(n) = len {
                     self.write(&format!("({n})"));
@@ -2448,6 +2474,25 @@ impl Generator {
                 self.write_keyword("COLLATE ");
                 self.write(collation);
             }
+            Expr::AtTimeZone { expr, zone } => {
+                // CR-032 Change 4: the timezone conversion used to be parsed and
+                // then discarded, which silently produced a differently-shifted
+                // value on every target. Oracle has no `AT TIME ZONE` operator,
+                // so it gets the FROM_TZ equivalent; every other dialect keeps
+                // the ANSI postfix spelling.
+                if matches!(self.dialect, Some(Dialect::Oracle)) {
+                    self.write_keyword("FROM_TZ(CAST(");
+                    self.gen_expr(expr);
+                    self.write_keyword(" AS TIMESTAMP), ");
+                    self.gen_expr(zone);
+                    self.write(")");
+                } else {
+                    self.gen_expr(expr);
+                    self.write(" ");
+                    self.write_keyword("AT TIME ZONE ");
+                    self.gen_expr(zone);
+                }
+            }
             Expr::Parameter(p) => self.write(p),
             Expr::TypeExpr(dt) => self.gen_data_type(dt),
             Expr::QualifiedWildcard { table } => {
@@ -2817,6 +2862,14 @@ impl Generator {
             TypedFunction::CurrentTimestamp => {
                 if is_tsql {
                     self.write_keyword("GETDATE()");
+                } else if is_oracle {
+                    // CR-032 Change 1: Oracle parses `CURRENT_TIMESTAMP(p)` as the
+                    // precision-qualified form, so an empty argument list reads as a
+                    // missing precision argument and raises ORA-30088 ("datetime/
+                    // interval precision is out of range"). The bare keyword is the
+                    // only valid spelling, matching the sibling CurrentDate /
+                    // CurrentTime arms above.
+                    self.write_keyword("CURRENT_TIMESTAMP");
                 } else if is_mysql
                     || matches!(
                         dialect,

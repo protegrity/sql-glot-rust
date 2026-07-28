@@ -7484,12 +7484,15 @@ impl Parser {
                     .map(|t| t.value.eq_ignore_ascii_case("ZONE"))
                     .unwrap_or(false)
             {
-                // PostgreSQL / DuckDB: `expr AT TIME ZONE 'tz'`. Swallow the
-                // suffix; the timezone-shifted value attaches to `expr`.
+                // PostgreSQL / DuckDB / T-SQL: `expr AT TIME ZONE 'tz'`.
                 self.advance(); // AT
                 self.advance(); // TIME
                 self.advance(); // ZONE
-                let _ = self.parse_primary()?;
+                let zone = self.parse_primary()?;
+                expr = Expr::AtTimeZone {
+                    expr: Box::new(expr),
+                    zone: Box::new(zone),
+                };
             } else if self.check_keyword("EXPORT_STATE")
                 && matches!(expr, Expr::Function { .. } | Expr::TypedFunction { .. })
             {

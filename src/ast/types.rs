@@ -509,6 +509,8 @@ pub enum Expr {
     NullIf { expr: Box<Expr>, r#else: Box<Expr> },
     /// `expr COLLATE collation`
     Collate { expr: Box<Expr>, collation: String },
+    /// `expr AT TIME ZONE zone`
+    AtTimeZone { expr: Box<Expr>, zone: Box<Expr> },
     /// Parameter / placeholder: `$1`, `?`, `:name`
     Parameter(String),
     /// A type expression used in DDL contexts or CAST
@@ -2051,6 +2053,10 @@ impl Expr {
                 r#else.walk(visitor);
             }
             Expr::Collate { expr, .. } => expr.walk(visitor),
+            Expr::AtTimeZone { expr, zone } => {
+                expr.walk(visitor);
+                zone.walk(visitor);
+            }
             Expr::Alias { expr, .. } => expr.walk(visitor),
             Expr::ArrayIndex { expr, index } => {
                 expr.walk(visitor);
@@ -2305,6 +2311,10 @@ impl Expr {
             Expr::Collate { expr, collation } => Expr::Collate {
                 expr: Box::new(expr.transform(func)),
                 collation,
+            },
+            Expr::AtTimeZone { expr, zone } => Expr::AtTimeZone {
+                expr: Box::new(expr.transform(func)),
+                zone: Box::new(zone.transform(func)),
             },
             Expr::Alias { expr, name } => Expr::Alias {
                 expr: Box::new(expr.transform(func)),
