@@ -97,6 +97,36 @@ fn semantic_analysis_is_available_through_the_ffi() {
 }
 
 #[test]
+fn semantic_schema_parsing_supports_dialect_types_and_udts() {
+    let sql = CString::new("SELECT id, state, measurements FROM events").unwrap();
+    let postgres = CString::new("postgres").unwrap();
+    let schema = CString::new(
+        r#"{
+          "tables": [
+            {
+              "path": ["events"],
+              "columns": [
+                {"name": "id", "data_type": "BIGINT"},
+                {"name": "state", "data_type": "app.custom_type"},
+                {"name": "measurements", "data_type": "NUMERIC(38, 9)[]"}
+              ]
+            }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    let ast = unsafe { sqlglot_parse(sql.as_ptr(), postgres.as_ptr()) };
+    let qualified = unsafe { sqlglot_qualify_columns(ast, schema.as_ptr(), postgres.as_ptr()) };
+    assert!(!qualified.is_null());
+
+    unsafe {
+        sqlglot_free(qualified);
+        sqlglot_free(ast);
+    }
+}
+
+#[test]
 fn schema_paths_do_not_split_dots_inside_identifiers() {
     let sql = CString::new(r#"SELECT id FROM "events.v2""#).unwrap();
     let postgres = CString::new("postgres").unwrap();

@@ -1852,6 +1852,202 @@ pub struct DropTableStatement {
 // Data types
 // ═══════════════════════════════════════════════════════════════════════
 
+/// Canonical SQLGlot data-type kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DataTypeKind {
+    Array,
+    #[serde(rename = "AGGREGATEFUNCTION")]
+    AggregateFunction,
+    #[serde(rename = "SIMPLEAGGREGATEFUNCTION")]
+    SimpleAggregateFunction,
+    #[serde(rename = "BIGDECIMAL")]
+    BigDecimal,
+    #[serde(rename = "BIGINT")]
+    BigInt,
+    #[serde(rename = "BIGNUM")]
+    BigNum,
+    #[serde(rename = "BIGSERIAL")]
+    BigSerial,
+    Binary,
+    Bit,
+    Blob,
+    Boolean,
+    #[serde(rename = "BPCHAR")]
+    BpChar,
+    Char,
+    CharacterSet,
+    Date,
+    Date32,
+    #[serde(rename = "DATEMULTIRANGE")]
+    DateMultiRange,
+    #[serde(rename = "DATERANGE")]
+    DateRange,
+    #[serde(rename = "DATETIME")]
+    DateTime,
+    #[serde(rename = "DATETIME2")]
+    DateTime2,
+    #[serde(rename = "DATETIME64")]
+    DateTime64,
+    Decimal,
+    Decimal32,
+    Decimal64,
+    Decimal128,
+    Decimal256,
+    #[serde(rename = "DECFLOAT")]
+    DecFloat,
+    Double,
+    Dynamic,
+    Enum,
+    Enum8,
+    Enum16,
+    File,
+    #[serde(rename = "FIXEDSTRING")]
+    FixedString,
+    Float,
+    Geography,
+    #[serde(rename = "GEOGRAPHYPOINT")]
+    GeographyPoint,
+    Geometry,
+    Point,
+    Ring,
+    #[serde(rename = "LINESTRING")]
+    LineString,
+    #[serde(rename = "MULTILINESTRING")]
+    MultiLineString,
+    Polygon,
+    #[serde(rename = "MULTIPOLYGON")]
+    MultiPolygon,
+    #[serde(rename = "HLLSKETCH")]
+    HllSketch,
+    #[serde(rename = "HSTORE")]
+    HStore,
+    Image,
+    Inet,
+    Int,
+    Int128,
+    Int256,
+    #[serde(rename = "INT4MULTIRANGE")]
+    Int4MultiRange,
+    #[serde(rename = "INT4RANGE")]
+    Int4Range,
+    #[serde(rename = "INT8MULTIRANGE")]
+    Int8MultiRange,
+    #[serde(rename = "INT8RANGE")]
+    Int8Range,
+    Interval,
+    #[serde(rename = "IPADDRESS")]
+    IpAddress,
+    #[serde(rename = "IPPREFIX")]
+    IpPrefix,
+    Ipv4,
+    Ipv6,
+    Json,
+    Jsonb,
+    List,
+    #[serde(rename = "LONGBLOB")]
+    LongBlob,
+    #[serde(rename = "LONGTEXT")]
+    LongText,
+    #[serde(rename = "LOWCARDINALITY")]
+    LowCardinality,
+    Map,
+    #[serde(rename = "MEDIUMBLOB")]
+    MediumBlob,
+    #[serde(rename = "MEDIUMINT")]
+    MediumInt,
+    #[serde(rename = "MEDIUMTEXT")]
+    MediumText,
+    Money,
+    Name,
+    #[serde(rename = "NCHAR")]
+    NChar,
+    Nested,
+    Nothing,
+    Null,
+    #[serde(rename = "NUMMULTIRANGE")]
+    NumMultiRange,
+    #[serde(rename = "NUMRANGE")]
+    NumRange,
+    Nvarchar,
+    Object,
+    Range,
+    #[serde(rename = "ROWVERSION")]
+    RowVersion,
+    Serial,
+    Set,
+    #[serde(rename = "SMALLDATETIME")]
+    SmallDateTime,
+    #[serde(rename = "SMALLINT")]
+    SmallInt,
+    #[serde(rename = "SMALLMONEY")]
+    SmallMoney,
+    #[serde(rename = "SMALLSERIAL")]
+    SmallSerial,
+    Struct,
+    Super,
+    Text,
+    #[serde(rename = "TINYBLOB")]
+    TinyBlob,
+    #[serde(rename = "TINYTEXT")]
+    TinyText,
+    Time,
+    #[serde(rename = "TIMETZ")]
+    TimeTz,
+    TimeNs,
+    Timestamp,
+    #[serde(rename = "TIMESTAMPNTZ")]
+    TimestampNtz,
+    #[serde(rename = "TIMESTAMPLTZ")]
+    TimestampLtz,
+    #[serde(rename = "TIMESTAMPTZ")]
+    TimestampTz,
+    TimestampS,
+    TimestampMs,
+    TimestampNs,
+    #[serde(rename = "TINYINT")]
+    TinyInt,
+    #[serde(rename = "TSMULTIRANGE")]
+    TsMultiRange,
+    #[serde(rename = "TSRANGE")]
+    TsRange,
+    #[serde(rename = "TSTZMULTIRANGE")]
+    TstzMultiRange,
+    #[serde(rename = "TSTZRANGE")]
+    TstzRange,
+    #[serde(rename = "UBIGINT")]
+    UBigInt,
+    #[serde(rename = "UINT")]
+    UInt,
+    #[serde(rename = "UINT128")]
+    UInt128,
+    #[serde(rename = "UINT256")]
+    UInt256,
+    #[serde(rename = "UMEDIUMINT")]
+    UMediumInt,
+    #[serde(rename = "UDECIMAL")]
+    UDecimal,
+    #[serde(rename = "UDOUBLE")]
+    UDouble,
+    Union,
+    Unknown,
+    #[serde(rename = "USERDEFINED")]
+    UserDefined,
+    #[serde(rename = "USMALLINT")]
+    USmallInt,
+    #[serde(rename = "UTINYINT")]
+    UTinyInt,
+    Uuid,
+    Varbinary,
+    Varchar,
+    Variant,
+    Vector,
+    Xml,
+    Year,
+    #[serde(rename = "TDIGEST")]
+    TDigest,
+}
+
 /// SQL data types. Significantly expanded to match sqlglot's DataType.Type enum.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -1954,6 +2150,68 @@ pub enum DataType {
     Geography,
     Geometry,
     Super,
+
+    Dialect {
+        kind: DataTypeKind,
+        sql: String,
+    },
+
+    UserDefined(String),
+}
+
+impl DataType {
+    #[must_use]
+    pub fn kind(&self) -> DataTypeKind {
+        match self {
+            Self::TinyInt => DataTypeKind::TinyInt,
+            Self::SmallInt => DataTypeKind::SmallInt,
+            Self::SmallSerial => DataTypeKind::SmallSerial,
+            Self::Int => DataTypeKind::Int,
+            Self::Serial => DataTypeKind::Serial,
+            Self::BigInt => DataTypeKind::BigInt,
+            Self::BigSerial => DataTypeKind::BigSerial,
+            Self::Float | Self::Real => DataTypeKind::Float,
+            Self::Double => DataTypeKind::Double,
+            Self::Decimal { .. } | Self::Numeric { .. } => DataTypeKind::Decimal,
+            Self::Varchar(_) | Self::VarcharMax | Self::Varchar2(_) => DataTypeKind::Varchar,
+            Self::Char(_) => DataTypeKind::Char,
+            Self::Text | Self::String => DataTypeKind::Text,
+            Self::Binary(_) | Self::Bytes => DataTypeKind::Binary,
+            Self::Varbinary(_) | Self::Bytea => DataTypeKind::Varbinary,
+            Self::Blob => DataTypeKind::Blob,
+            Self::NChar(_) => DataTypeKind::NChar,
+            Self::NVarchar(_) | Self::NvarcharMax | Self::NVarchar2(_) => DataTypeKind::Nvarchar,
+            Self::Boolean => DataTypeKind::Boolean,
+            Self::Date => DataTypeKind::Date,
+            Self::Time { .. } => DataTypeKind::Time,
+            Self::Timestamp { with_tz: true, .. } => DataTypeKind::TimestampTz,
+            Self::Timestamp { with_tz: false, .. } => DataTypeKind::Timestamp,
+            Self::Interval => DataTypeKind::Interval,
+            Self::DateTime => DataTypeKind::DateTime,
+            Self::Json => DataTypeKind::Json,
+            Self::Jsonb => DataTypeKind::Jsonb,
+            Self::Uuid => DataTypeKind::Uuid,
+            Self::Array(_) => DataTypeKind::Array,
+            Self::Map { .. } => DataTypeKind::Map,
+            Self::Struct(_) | Self::Tuple(_) => DataTypeKind::Struct,
+            Self::Null => DataTypeKind::Null,
+            Self::Unknown(_) => DataTypeKind::Unknown,
+            Self::Variant => DataTypeKind::Variant,
+            Self::Object => DataTypeKind::Object,
+            Self::Xml => DataTypeKind::Xml,
+            Self::Inet | Self::Cidr => DataTypeKind::Inet,
+            Self::Macaddr => DataTypeKind::UserDefined,
+            Self::Bit(_) => DataTypeKind::Bit,
+            Self::Money => DataTypeKind::Money,
+            Self::Regclass | Self::Regtype => DataTypeKind::UserDefined,
+            Self::Hstore => DataTypeKind::HStore,
+            Self::Geography => DataTypeKind::Geography,
+            Self::Geometry => DataTypeKind::Geometry,
+            Self::Super => DataTypeKind::Super,
+            Self::Dialect { kind, .. } => *kind,
+            Self::UserDefined(_) => DataTypeKind::UserDefined,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

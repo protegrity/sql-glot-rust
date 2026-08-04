@@ -1,3 +1,4 @@
+mod data_type_parser;
 mod sql_parser;
 
 pub use sql_parser::Parser;
@@ -25,8 +26,22 @@ pub fn parse(sql: &str, dialect: Dialect) -> Result<Statement> {
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if the input is not
 /// a valid data type or contains trailing tokens.
 pub fn parse_data_type(sql: &str, dialect: Dialect) -> Result<DataType> {
-    let mut parser = Parser::new_with_bracket_identifiers(sql, is_tsql_family(dialect))?;
-    parser.parse_data_type_expression()
+    data_type_parser::parse(sql, dialect)
+}
+
+/// Parse a standalone SQL data type, falling back to a user-defined type for a
+/// valid unrecognized type name.
+///
+/// # Errors
+///
+/// Returns a [`SqlglotError`](crate::errors::SqlglotError) if the input cannot
+/// be parsed and is not a valid user-defined name.
+pub fn parse_data_type_with_udt(sql: &str, dialect: Dialect) -> Result<DataType> {
+    data_type_parser::parse_with_udt(sql, dialect, true)
+}
+
+pub(crate) fn parse_schema_data_type(sql: &str, dialect: Dialect) -> Result<DataType> {
+    data_type_parser::parse_schema(sql, dialect)
 }
 
 /// Parse a SQL string into a [`Statement`] AST, preserving SQL comments.
@@ -67,7 +82,7 @@ pub fn parse_statements_with_comments(sql: &str, dialect: Dialect) -> Result<Vec
 
 #[cfg(test)]
 mod tests {
-    use super::parse_data_type;
+    use super::{parse_data_type, parse_data_type_with_udt};
     use crate::ast::DataType;
     use crate::dialects::Dialect;
 
@@ -96,5 +111,14 @@ mod tests {
     #[test]
     fn rejects_trailing_tokens() {
         assert!(parse_data_type("INTEGER nonsense", Dialect::Ansi).is_err());
+    }
+
+    #[test]
+    fn optionally_accepts_user_defined_types() {
+        assert!(parse_data_type("app.custom_type", Dialect::Postgres).is_err());
+        assert!(matches!(
+            parse_data_type_with_udt("app.custom_type", Dialect::Postgres).unwrap(),
+            DataType::UserDefined(_)
+        ));
     }
 }

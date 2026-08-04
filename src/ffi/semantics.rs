@@ -12,7 +12,6 @@ use crate::dialects::Dialect;
 use crate::optimizer::lineage::{LineageConfig, LineageGraph, LineageNode, lineage};
 use crate::optimizer::qualify_columns::qualify_columns;
 use crate::optimizer::scope_analysis::{ColumnRef, Scope, ScopeType, Source, build_scope};
-use crate::parser::parse_data_type;
 use crate::schema::MappingSchema;
 
 #[derive(Serialize)]
@@ -167,7 +166,7 @@ fn mapping_schema(json: &str, dialect: Dialect) -> Option<MappingSchema> {
             .columns
             .into_iter()
             .map(|column| {
-                parse_data_type(&column.data_type, dialect)
+                crate::parser::parse_schema_data_type(&column.data_type, dialect)
                     .ok()
                     .map(|data_type| (column.name, data_type))
             })
