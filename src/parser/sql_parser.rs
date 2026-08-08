@@ -9886,19 +9886,21 @@ impl Parser {
             "LTRIM" => {
                 let mut it = args.into_iter();
                 let expr = it.next()?;
+                let trim_chars = it.next().map(Box::new);
                 TypedFunction::Trim {
                     expr: Box::new(expr),
                     trim_type: TrimType::Leading,
-                    trim_chars: None,
+                    trim_chars,
                 }
             }
             "RTRIM" => {
                 let mut it = args.into_iter();
                 let expr = it.next()?;
+                let trim_chars = it.next().map(Box::new);
                 TypedFunction::Trim {
                     expr: Box::new(expr),
                     trim_type: TrimType::Trailing,
-                    trim_chars: None,
+                    trim_chars,
                 }
             }
             "SUBSTRING" | "SUBSTR" => {
