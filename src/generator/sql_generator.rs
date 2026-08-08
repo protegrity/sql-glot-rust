@@ -2975,10 +2975,12 @@ impl Generator {
                         | Some(Dialect::Sqlite)
                         | Some(Dialect::DuckDb)
                 );
-                // Hive proper supports only single-argument TRIM/LTRIM/RTRIM: no
-                // FROM grammar and no custom trim characters.
-                let hive_only = matches!(dialect, Some(Dialect::Hive));
-                if comma_form || hive_only {
+                // Hive supports only single-argument TRIM/LTRIM/RTRIM. Custom
+                // characters fall through to the ANSI form below so Hive rejects
+                // the unsupported operation instead of silently trimming spaces.
+                let hive_single_arg =
+                    matches!(dialect, Some(Dialect::Hive)) && trim_chars.is_none();
+                if comma_form || hive_single_arg {
                     let fname = match trim_type {
                         TrimType::Leading => "LTRIM(",
                         TrimType::Trailing => "RTRIM(",
@@ -2986,9 +2988,7 @@ impl Generator {
                     };
                     self.write_keyword(fname);
                     self.gen_expr(expr);
-                    // Hive has no way to express a custom trim character set, so
-                    // it is dropped (best effort); comma-form dialects keep it.
-                    if !hive_only && let Some(chars) = trim_chars {
+                    if let Some(chars) = trim_chars {
                         self.write(", ");
                         self.gen_expr(chars);
                     }

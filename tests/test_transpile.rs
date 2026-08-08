@@ -1669,6 +1669,29 @@ fn issue_30_ltrim_rtrim_preserve_chars_tsql() {
 }
 
 #[test]
+fn issue_33_hive_trim_chars_fail_closed() {
+    for (sql, expected) in [
+        (
+            "SELECT LTRIM(a, 'x') FROM t",
+            "SELECT TRIM(LEADING 'x' FROM a) FROM t",
+        ),
+        (
+            "SELECT RTRIM(a, 'x') FROM t",
+            "SELECT TRIM(TRAILING 'x' FROM a) FROM t",
+        ),
+        (
+            "SELECT TRIM(a, 'x') FROM t",
+            "SELECT TRIM('x' FROM a) FROM t",
+        ),
+        ("SELECT LTRIM(a) FROM t", "SELECT LTRIM(a) FROM t"),
+        ("SELECT RTRIM(a) FROM t", "SELECT RTRIM(a) FROM t"),
+        ("SELECT TRIM(a) FROM t", "SELECT TRIM(a) FROM t"),
+    ] {
+        validate_with_dialect(sql, expected, Dialect::Hive, Dialect::Hive);
+    }
+}
+
+#[test]
 fn cr024_ansi_trim_roundtrip_controls() {
     // ANSI FROM-form round-trips unchanged on PostgreSQL, Oracle, MySQL.
     validate_with_dialect(
