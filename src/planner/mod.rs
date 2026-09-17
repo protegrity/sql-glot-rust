@@ -533,6 +533,12 @@ impl PlanBuilder {
     fn plan_table_source(&mut self, source: &TableSource) -> Result<StepId> {
         match source {
             TableSource::Table(tref) => {
+                if tref.temporal.is_some() {
+                    return Err(SqlglotError::UnsupportedDialectFeature(
+                        "table temporal clauses are not supported by the logical planner"
+                            .to_string(),
+                    ));
+                }
                 let table = fully_qualified_name(tref);
                 Ok(self.add_step(Step::Scan {
                     table,
@@ -967,6 +973,19 @@ mod tests {
         let ast = parse("SELECT 1 + 2", Dialect::Ansi).unwrap();
         let p = plan(&ast).unwrap();
         assert!(!p.is_empty());
+    }
+
+    #[test]
+    fn test_temporal_table_scan_fails_closed() {
+        let statement = crate::parse(
+            "SELECT * FROM employees AT(OFFSET => -60)",
+            crate::Dialect::Snowflake,
+        )
+        .unwrap();
+        assert!(matches!(
+            plan(&statement),
+            Err(SqlglotError::UnsupportedDialectFeature(_))
+        ));
     }
 
     #[test]

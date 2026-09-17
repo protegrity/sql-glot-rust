@@ -771,6 +771,7 @@ pub fn transpile_ext(
     let ast = crate::parser::parse(sql, parse_dialect)?;
     let transformed = transform(&ast, read_dialect, write_dialect);
     let gen_dialect = write_dialect.as_builtin().unwrap_or(Dialect::Ansi);
+    crate::validate_dialect_support(&transformed, gen_dialect)?;
     Ok(crate::generator::generate(&transformed, gen_dialect))
 }
 
@@ -790,6 +791,7 @@ pub fn transpile_statements_ext(
     let mut results = Vec::with_capacity(stmts.len());
     for stmt in &stmts {
         let transformed = transform(stmt, read_dialect, write_dialect);
+        crate::validate_dialect_support(&transformed, gen_dialect)?;
         results.push(crate::generator::generate(&transformed, gen_dialect));
     }
     Ok(results)

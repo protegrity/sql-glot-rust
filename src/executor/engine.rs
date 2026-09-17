@@ -131,6 +131,12 @@ impl<'a> ExecutionContext<'a> {
     fn resolve_table_source(&self, source: &TableSource) -> Result<Vec<RowContext>> {
         match source {
             TableSource::Table(table_ref) => {
+                if table_ref.temporal.is_some() {
+                    return Err(SqlglotError::UnsupportedDialectFeature(
+                        "table temporal clauses are not supported by the in-memory executor"
+                            .to_string(),
+                    ));
+                }
                 let table_name = table_ref.name.to_lowercase();
                 let alias = table_ref
                     .alias

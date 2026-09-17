@@ -1,8 +1,8 @@
 use std::ffi::{CStr, CString};
 
 use sqlglot_rust::ffi::{
-    sqlglot_build_scope, sqlglot_free, sqlglot_generate_pretty, sqlglot_lineage, sqlglot_parse,
-    sqlglot_qualify_columns,
+    sqlglot_build_scope, sqlglot_free, sqlglot_generate, sqlglot_generate_pretty, sqlglot_lineage,
+    sqlglot_parse, sqlglot_qualify_columns,
 };
 
 fn read_json(pointer: *mut std::os::raw::c_char) -> serde_json::Value {
@@ -33,6 +33,39 @@ fn pretty_generation_is_available_through_the_ffi() {
     unsafe {
         sqlglot_free(generated);
         sqlglot_free(ast_json);
+    }
+}
+
+#[test]
+fn temporal_tables_roundtrip_and_reject_unsupported_targets_through_ffi() {
+    let sql = CString::new("SELECT * FROM t AT(OFFSET => -60)").unwrap();
+    let snowflake = CString::new("snowflake").unwrap();
+    let postgres = CString::new("postgres").unwrap();
+
+    let ast = unsafe { sqlglot_parse(sql.as_ptr(), snowflake.as_ptr()) };
+    assert!(!ast.is_null());
+    let ast_value: serde_json::Value = unsafe { CStr::from_ptr(ast) }
+        .to_str()
+        .ok()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap();
+    assert_eq!(
+        ast_value["Select"]["from"]["source"]["Table"]["temporal"]["Snowflake"]["selector"],
+        "Offset"
+    );
+
+    let generated = unsafe { sqlglot_generate(ast, snowflake.as_ptr()) };
+    assert!(!generated.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(generated) }.to_str().unwrap(),
+        "SELECT * FROM t AT (OFFSET => -60)"
+    );
+    let unsupported = unsafe { sqlglot_generate(ast, postgres.as_ptr()) };
+    assert!(unsupported.is_null());
+
+    unsafe {
+        sqlglot_free(generated);
+        sqlglot_free(ast);
     }
 }
 

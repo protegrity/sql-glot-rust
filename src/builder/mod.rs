@@ -104,6 +104,7 @@ pub fn table(name: &str, schema: Option<&str>) -> TableRef {
         schema: schema.map(String::from),
         name: name.to_string(),
         alias: None,
+        temporal: None,
         name_quote_style: QuoteStyle::None,
         alias_quote_style: QuoteStyle::None,
     }
@@ -130,6 +131,7 @@ pub fn table_full(name: &str, schema: Option<&str>, catalog: Option<&str>) -> Ta
         schema: schema.map(String::from),
         name: name.to_string(),
         alias: None,
+        temporal: None,
         name_quote_style: QuoteStyle::None,
         alias_quote_style: QuoteStyle::None,
     }

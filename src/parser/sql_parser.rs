@@ -787,6 +787,17 @@ impl Parser {
 
     /// Parse a single SQL statement.
     pub fn parse_statement(&mut self) -> Result<Statement> {
+        let statement = self.parse_statement_in_stream()?;
+        self.collect_comments();
+        if !matches!(self.peek_type(), TokenType::Eof) {
+            return Err(SqlglotError::UnexpectedToken {
+                token: self.peek().clone(),
+            });
+        }
+        Ok(statement)
+    }
+
+    fn parse_statement_in_stream(&mut self) -> Result<Statement> {
         self.collect_comments();
         let mut stmt = self.parse_statement_inner()?;
         // T-SQL statement-tail query hint: `... OPTION ( <hint> [, <hint> ...] )`
@@ -1159,7 +1170,7 @@ impl Parser {
             if matches!(self.peek_type(), TokenType::Eof) {
                 break;
             }
-            stmts.push(self.parse_statement()?);
+            stmts.push(self.parse_statement_in_stream()?);
             // ClickHouse trailing `FORMAT <name>` after a statement is a
             // client-side output directive, not part of the AST. Swallow
             // it (and any whitespace-separated payload up to the next
@@ -2418,41 +2429,6 @@ impl Parser {
         // child tables. Swallow the trailing `*` so the table alias /
         // joins continue to parse.
         let _ = self.match_token(TokenType::Star);
-        // BigQuery / Snowflake / MySQL TiDB time-travel:
-        //   `<tbl> [FOR SYSTEM_TIME] AS OF [TIMESTAMP] <expr>` or
-        //   `<tbl> AS OF VERSION <expr>` / `AS OF TIMESTAMP <expr>`.
-        // We don't model the time-travel clause in the AST; swallow the
-        // keywords and the expression so the surrounding query parses.
-        if self.is_name_token()
-            && self.peek().value.eq_ignore_ascii_case("FOR")
-            && self
-                .peek_offset(1)
-                .map(|t| t.value.eq_ignore_ascii_case("SYSTEM_TIME"))
-                .unwrap_or(false)
-        {
-            self.advance(); // FOR
-            self.advance(); // SYSTEM_TIME
-        }
-        if self.peek_type() == &TokenType::As
-            && self
-                .peek_offset(1)
-                .map(|t| t.value.eq_ignore_ascii_case("OF"))
-                .unwrap_or(false)
-        {
-            self.advance(); // AS
-            self.advance(); // OF
-            // Optional TIMESTAMP / VERSION qualifier.
-            if matches!(self.peek_type(), TokenType::Timestamp)
-                || (self.is_name_token()
-                    && matches!(
-                        self.peek().value.to_uppercase().as_str(),
-                        "VERSION" | "SCN" | "SEQUENCE"
-                    ))
-            {
-                self.advance();
-            }
-            let _ = self.parse_expr()?;
-        }
         // Hive / Spark / Trino `TABLESAMPLE [method] (...)` after a table
         // reference. We don't model the sample clause in the AST; just
         // consume the optional method identifier (BERNOULLI / SYSTEM /
@@ -2889,7 +2865,7 @@ impl Parser {
         }
 
         // Regular table reference (possibly with function syntax)
-        let table_ref = self.parse_table_ref()?;
+        let mut table_ref = self.parse_table_ref_no_alias()?;
 
         // MySQL / TiDB partition selector: `tbl PARTITION (p0, p1)`. Swallow
         // it so the table reference parses cleanly.
@@ -3041,6 +3017,17 @@ impl Parser {
             });
         }
 
+        table_ref.temporal = self.parse_table_temporal_clause()?;
+        if let Some((alias, quote_style)) = self.parse_optional_alias()? {
+            table_ref.alias = Some(alias);
+            table_ref.alias_quote_style = quote_style;
+        }
+        if table_ref.alias.is_some() && self.parse_table_temporal_clause()?.is_some() {
+            return Err(SqlglotError::ParserError {
+                message: "Table temporal clause must appear before the table alias".to_string(),
+            });
+        }
+
         // Also support positional column-list alias on a plain table reference:
         //   FROM tbl t(c1, c2)
         if self.peek_type() == &TokenType::LParen && table_ref.alias.is_some() {
@@ -3147,6 +3134,169 @@ impl Parser {
         }
 
         Ok(TableSource::Table(table_ref))
+    }
+
+    fn parse_table_temporal_clause(&mut self) -> Result<Option<TableTemporalClause>> {
+        self.collect_comments();
+        if (self.check_keyword("AT") || self.check_keyword("BEFORE"))
+            && self.check_keyword_offset("(", 1)
+        {
+            let position = if self.match_keyword("AT") {
+                SnowflakeTemporalPosition::At
+            } else {
+                self.expect_keyword("BEFORE")?;
+                SnowflakeTemporalPosition::Before
+            };
+            self.expect(TokenType::LParen)?;
+            let selector = if self.match_keyword("OFFSET") {
+                SnowflakeTemporalSelector::Offset
+            } else if self.match_keyword("TIMESTAMP") {
+                SnowflakeTemporalSelector::Timestamp
+            } else if self.match_keyword("STATEMENT") {
+                SnowflakeTemporalSelector::Statement
+            } else if self.match_keyword("STREAM") {
+                SnowflakeTemporalSelector::Stream
+            } else {
+                return Err(SqlglotError::ParserError {
+                    message: format!(
+                        "Expected Snowflake temporal selector OFFSET, TIMESTAMP, STATEMENT, or STREAM, got '{}'",
+                        self.peek().value
+                    ),
+                });
+            };
+            self.expect(TokenType::Eq)?;
+            self.expect(TokenType::Gt)?;
+            let expression = self.parse_expr()?;
+            self.expect(TokenType::RParen)?;
+            return Ok(Some(TableTemporalClause::Snowflake {
+                position,
+                selector,
+                expression: Box::new(expression),
+            }));
+        }
+
+        if self.check_keyword("FOR") && self.check_keyword_offset("SYSTEM_TIME", 1) {
+            self.advance();
+            self.advance();
+            let spec = if self.match_keyword("AS") {
+                self.expect_keyword("OF")?;
+                SystemTimeSpec::AsOf(Box::new(self.parse_addition()?))
+            } else if self.match_keyword("FROM") {
+                let start = self.parse_addition()?;
+                self.expect_keyword("TO")?;
+                let end = self.parse_addition()?;
+                SystemTimeSpec::FromTo {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                }
+            } else if self.match_keyword("BETWEEN") {
+                let start = self.parse_addition()?;
+                self.expect_keyword("AND")?;
+                let end = self.parse_addition()?;
+                SystemTimeSpec::BetweenAnd {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                }
+            } else if self.match_keyword("CONTAINED") {
+                self.expect_keyword("IN")?;
+                self.expect(TokenType::LParen)?;
+                let start = self.parse_expr()?;
+                self.expect(TokenType::Comma)?;
+                let end = self.parse_expr()?;
+                self.expect(TokenType::RParen)?;
+                SystemTimeSpec::ContainedIn {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                }
+            } else if self.match_keyword("ALL") {
+                SystemTimeSpec::All
+            } else {
+                return Err(SqlglotError::ParserError {
+                    message: format!(
+                        "Expected AS OF, FROM, BETWEEN, CONTAINED IN, or ALL after FOR SYSTEM_TIME, got '{}'",
+                        self.peek().value
+                    ),
+                });
+            };
+            return Ok(Some(TableTemporalClause::SystemTime(spec)));
+        }
+
+        if self.check_keyword("FOR") && self.check_keyword_offset("SYSTEM_VERSION", 1) {
+            self.advance();
+            self.advance();
+            self.expect_keyword("AS")?;
+            self.expect_keyword("OF")?;
+            return Ok(Some(TableTemporalClause::SystemVersionAsOf {
+                expression: Box::new(self.parse_addition()?),
+            }));
+        }
+
+        if self.check_keyword("AS")
+            && self.check_keyword_offset("OF", 1)
+            && (self.check_keyword_offset("SCN", 2) || self.check_keyword_offset("TIMESTAMP", 2))
+        {
+            self.advance();
+            self.advance();
+            let kind = if self.match_keyword("SCN") {
+                OracleFlashbackKind::Scn
+            } else {
+                self.expect_keyword("TIMESTAMP")?;
+                OracleFlashbackKind::Timestamp
+            };
+            return Ok(Some(TableTemporalClause::OracleFlashback(
+                OracleFlashbackSpec::AsOf {
+                    kind,
+                    expression: Box::new(self.parse_addition()?),
+                },
+            )));
+        }
+
+        if self.check_keyword("VERSIONS") && self.check_keyword_offset("BETWEEN", 1) {
+            self.advance();
+            self.advance();
+            let kind = if self.match_keyword("SCN") {
+                OracleFlashbackKind::Scn
+            } else if self.match_keyword("TIMESTAMP") {
+                OracleFlashbackKind::Timestamp
+            } else {
+                return Err(SqlglotError::ParserError {
+                    message: format!(
+                        "Expected SCN or TIMESTAMP after VERSIONS BETWEEN, got '{}'",
+                        self.peek().value
+                    ),
+                });
+            };
+            let start = self.parse_addition()?;
+            self.expect_keyword("AND")?;
+            let end = self.parse_addition()?;
+            return Ok(Some(TableTemporalClause::OracleFlashback(
+                OracleFlashbackSpec::VersionsBetween {
+                    kind,
+                    start: Box::new(start),
+                    end: Box::new(end),
+                },
+            )));
+        }
+
+        if (self.check_keyword("VERSION") || self.check_keyword("TIMESTAMP"))
+            && self.check_keyword_offset("AS", 1)
+            && self.check_keyword_offset("OF", 2)
+        {
+            let kind = if self.match_keyword("VERSION") {
+                VersionAsOfKind::Version
+            } else {
+                self.expect_keyword("TIMESTAMP")?;
+                VersionAsOfKind::Timestamp
+            };
+            self.expect_keyword("AS")?;
+            self.expect_keyword("OF")?;
+            return Ok(Some(TableTemporalClause::VersionAsOf {
+                kind,
+                expression: Box::new(self.parse_addition()?),
+            }));
+        }
+
+        Ok(None)
     }
 
     /// After parsing a base table source, check if PIVOT or UNPIVOT follows.
@@ -3328,6 +3478,7 @@ impl Parser {
                 schema: None,
                 name,
                 alias,
+                temporal: None,
                 name_quote_style: QuoteStyle::None,
                 alias_quote_style,
             });
@@ -3369,6 +3520,7 @@ impl Parser {
             schema,
             name,
             alias,
+            temporal: None,
             name_quote_style: name_qs,
             alias_quote_style,
         })
@@ -3376,6 +3528,32 @@ impl Parser {
 
     /// Like `parse_table_ref` but does not consume an alias.
     fn parse_table_ref_no_alias(&mut self) -> Result<TableRef> {
+        if matches!(self.peek_type(), TokenType::AtSign)
+            && self
+                .peek_offset(1)
+                .map(|t| {
+                    matches!(t.token_type, TokenType::Identifier)
+                        || matches!(t.token_type, TokenType::AtSign)
+                })
+                .unwrap_or(false)
+        {
+            let mut name = String::from("@");
+            self.advance();
+            if matches!(self.peek_type(), TokenType::AtSign) {
+                name.push('@');
+                self.advance();
+            }
+            name.push_str(&self.advance().value.clone());
+            return Ok(TableRef {
+                catalog: None,
+                schema: None,
+                name,
+                alias: None,
+                temporal: None,
+                name_quote_style: QuoteStyle::None,
+                alias_quote_style: QuoteStyle::None,
+            });
+        }
         let (first, first_qs) = self.expect_name_with_quote()?;
 
         let (catalog, schema, name, name_qs) = if self.match_token(TokenType::Dot) {
@@ -3405,6 +3583,7 @@ impl Parser {
             schema,
             name,
             alias: None,
+            temporal: None,
             name_quote_style: name_qs,
             alias_quote_style: QuoteStyle::None,
         })
@@ -8175,6 +8354,7 @@ impl Parser {
                             | TokenType::Hour
                             | TokenType::Minute
                             | TokenType::Second
+                            | TokenType::End
                     )
                 {
                     let nt = self.advance().clone();

@@ -293,12 +293,82 @@ pub struct TableRef {
     pub schema: Option<String>,
     pub name: String,
     pub alias: Option<String>,
+    /// A table-level temporal or version selector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal: Option<TableTemporalClause>,
     /// How the table name was quoted in the source SQL.
     #[serde(default)]
     pub name_quote_style: QuoteStyle,
     /// How the alias was quoted in the source SQL.
     #[serde(default)]
     pub alias_quote_style: QuoteStyle,
+}
+
+/// A temporal or version selector attached to a table reference.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TableTemporalClause {
+    Snowflake {
+        position: SnowflakeTemporalPosition,
+        selector: SnowflakeTemporalSelector,
+        expression: Box<Expr>,
+    },
+    SystemTime(SystemTimeSpec),
+    OracleFlashback(OracleFlashbackSpec),
+    VersionAsOf {
+        kind: VersionAsOfKind,
+        expression: Box<Expr>,
+    },
+    SystemVersionAsOf {
+        expression: Box<Expr>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SnowflakeTemporalPosition {
+    At,
+    Before,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SnowflakeTemporalSelector {
+    Offset,
+    Timestamp,
+    Statement,
+    Stream,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SystemTimeSpec {
+    AsOf(Box<Expr>),
+    FromTo { start: Box<Expr>, end: Box<Expr> },
+    BetweenAnd { start: Box<Expr>, end: Box<Expr> },
+    ContainedIn { start: Box<Expr>, end: Box<Expr> },
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum OracleFlashbackSpec {
+    AsOf {
+        kind: OracleFlashbackKind,
+        expression: Box<Expr>,
+    },
+    VersionsBetween {
+        kind: OracleFlashbackKind,
+        start: Box<Expr>,
+        end: Box<Expr>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OracleFlashbackKind {
+    Scn,
+    Timestamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VersionAsOfKind {
+    Version,
+    Timestamp,
 }
 
 /// A JOIN clause.
