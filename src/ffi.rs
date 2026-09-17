@@ -114,8 +114,11 @@ pub unsafe extern "C" fn sqlglot_generate(
     let dialect_enum = resolve_dialect(unsafe { cstr_to_option(dialect) });
 
     match serde_json::from_str::<crate::ast::Statement>(json_str) {
-        Ok(ast) => to_c_string(crate::generate(&ast, dialect_enum)),
+        Ok(ast) if crate::validate_dialect_support(&ast, dialect_enum).is_ok() => {
+            to_c_string(crate::generate(&ast, dialect_enum))
+        }
         Err(_) => ptr::null_mut(),
+        _ => ptr::null_mut(),
     }
 }
 
@@ -138,8 +141,11 @@ pub unsafe extern "C" fn sqlglot_generate_pretty(
     let dialect_enum = resolve_dialect(unsafe { cstr_to_option(dialect) });
 
     match serde_json::from_str::<crate::ast::Statement>(json_str) {
-        Ok(ast) => to_c_string(crate::generate_pretty(&ast, dialect_enum)),
+        Ok(ast) if crate::validate_dialect_support(&ast, dialect_enum).is_ok() => {
+            to_c_string(crate::generate_pretty(&ast, dialect_enum))
+        }
         Err(_) => ptr::null_mut(),
+        _ => ptr::null_mut(),
     }
 }
 

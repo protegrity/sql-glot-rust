@@ -4,7 +4,7 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 use sqlglot_rust::parser::parse_statements;
-use sqlglot_rust::{Dialect, generate, generate_pretty, optimizer};
+use sqlglot_rust::{Dialect, generate, generate_pretty, optimizer, validate_dialect_support};
 
 /// A SQL parser, optimizer, and transpiler CLI.
 ///
@@ -174,6 +174,7 @@ fn run_transpile(
         } else {
             stmt
         };
+        validate_dialect_support(&stmt, write_dialect)?;
         let generated = if pretty {
             generate_pretty(&stmt, write_dialect)
         } else {

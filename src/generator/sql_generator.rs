@@ -669,12 +669,107 @@ impl Generator {
             self.write(".");
         }
         self.write_quoted(&table.name, table.name_quote_style);
+        if let Some(temporal) = &table.temporal {
+            self.gen_table_temporal_clause(temporal);
+        }
         if let Some(alias) = &table.alias {
             self.write(" ");
             if !self.omit_table_alias_as() {
                 self.write_keyword("AS ");
             }
             self.write_alias(alias, table.alias_quote_style);
+        }
+    }
+
+    fn gen_table_temporal_clause(&mut self, temporal: &TableTemporalClause) {
+        match temporal {
+            TableTemporalClause::Snowflake {
+                position,
+                selector,
+                expression,
+            } => {
+                self.write(" ");
+                self.write_keyword(match position {
+                    SnowflakeTemporalPosition::At => "AT",
+                    SnowflakeTemporalPosition::Before => "BEFORE",
+                });
+                self.write(" (");
+                self.write_keyword(match selector {
+                    SnowflakeTemporalSelector::Offset => "OFFSET",
+                    SnowflakeTemporalSelector::Timestamp => "TIMESTAMP",
+                    SnowflakeTemporalSelector::Statement => "STATEMENT",
+                    SnowflakeTemporalSelector::Stream => "STREAM",
+                });
+                self.write(" => ");
+                self.gen_expr(expression);
+                self.write(")");
+            }
+            TableTemporalClause::SystemTime(spec) => {
+                self.write(" ");
+                self.write_keyword("FOR SYSTEM_TIME ");
+                match spec {
+                    SystemTimeSpec::AsOf(expression) => {
+                        self.write_keyword("AS OF ");
+                        self.gen_expr(expression);
+                    }
+                    SystemTimeSpec::FromTo { start, end } => {
+                        self.write_keyword("FROM ");
+                        self.gen_expr(start);
+                        self.write_keyword(" TO ");
+                        self.gen_expr(end);
+                    }
+                    SystemTimeSpec::BetweenAnd { start, end } => {
+                        self.write_keyword("BETWEEN ");
+                        self.gen_expr(start);
+                        self.write_keyword(" AND ");
+                        self.gen_expr(end);
+                    }
+                    SystemTimeSpec::ContainedIn { start, end } => {
+                        self.write_keyword("CONTAINED IN (");
+                        self.gen_expr(start);
+                        self.write(", ");
+                        self.gen_expr(end);
+                        self.write(")");
+                    }
+                    SystemTimeSpec::All => self.write_keyword("ALL"),
+                }
+            }
+            TableTemporalClause::OracleFlashback(spec) => {
+                self.write(" ");
+                match spec {
+                    OracleFlashbackSpec::AsOf { kind, expression } => {
+                        self.write_keyword("AS OF ");
+                        self.write_keyword(match kind {
+                            OracleFlashbackKind::Scn => "SCN ",
+                            OracleFlashbackKind::Timestamp => "TIMESTAMP ",
+                        });
+                        self.gen_expr(expression);
+                    }
+                    OracleFlashbackSpec::VersionsBetween { kind, start, end } => {
+                        self.write_keyword("VERSIONS BETWEEN ");
+                        self.write_keyword(match kind {
+                            OracleFlashbackKind::Scn => "SCN ",
+                            OracleFlashbackKind::Timestamp => "TIMESTAMP ",
+                        });
+                        self.gen_expr(start);
+                        self.write_keyword(" AND ");
+                        self.gen_expr(end);
+                    }
+                }
+            }
+            TableTemporalClause::VersionAsOf { kind, expression } => {
+                self.write(" ");
+                self.write_keyword(match kind {
+                    VersionAsOfKind::Version => "VERSION AS OF ",
+                    VersionAsOfKind::Timestamp => "TIMESTAMP AS OF ",
+                });
+                self.gen_expr(expression);
+            }
+            TableTemporalClause::SystemVersionAsOf { expression } => {
+                self.write(" ");
+                self.write_keyword("FOR SYSTEM_VERSION AS OF ");
+                self.gen_expr(expression);
+            }
         }
     }
 

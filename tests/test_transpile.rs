@@ -3,7 +3,14 @@
 /// These test parse→generate roundtrips (identity), normalization transforms,
 /// and basic cross-dialect transpilation. Modeled after the `validate` and
 /// `validate_identity` helpers in the Python test suite.
-use sqlglot_rust::{Dialect, generate, parse, transpile};
+use sqlglot_rust::ast::{
+    SnowflakeTemporalPosition, SnowflakeTemporalSelector, Statement, TableSource,
+    TableTemporalClause,
+};
+use sqlglot_rust::{
+    Dialect, SqlglotError, generate, parse, transpile, transpile_statements,
+    transpile_with_comments, validate_dialect_support,
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Helpers (mirrors Python sqlglot's TestTranspile.validate / validate_identity)
@@ -4990,5 +4997,284 @@ fn cr032_at_time_zone_non_literal_zone_and_chaining() {
         "SELECT ts AT TIME ZONE 'UTC' AT TIME ZONE 'EST' FROM t",
         Dialect::Postgres,
         Dialect::Postgres,
+    );
+}
+
+// ── CR-033: table-level temporal and version clauses ────────────────────────
+
+fn cr033_roundtrip(sql: &str, expected: &str, dialect: Dialect) {
+    let ast = parse(sql, dialect).unwrap_or_else(|error| panic!("Parse failed for {sql}: {error}"));
+    let generated = generate(&ast, dialect);
+    assert_eq!(generated, expected, "Unexpected temporal SQL for {sql}");
+    let reparsed = parse(&generated, dialect)
+        .unwrap_or_else(|error| panic!("Reparse failed for {generated}: {error}"));
+    assert_eq!(
+        reparsed, ast,
+        "Temporal AST changed after reparse for {sql}"
+    );
+}
+
+#[test]
+fn cr033_snowflake_temporal_ast_is_not_a_table_function() {
+    let ast = parse(
+        "SELECT full_name, ssn FROM byopp_cust AT(OFFSET => -60) WHERE id = 1",
+        Dialect::Snowflake,
+    )
+    .unwrap();
+    let Statement::Select(select) = ast else {
+        panic!("expected SELECT");
+    };
+    let TableSource::Table(table) = select.from.unwrap().source else {
+        panic!("temporal source was not parsed as a table");
+    };
+    assert!(matches!(
+        table.temporal,
+        Some(TableTemporalClause::Snowflake {
+            position: SnowflakeTemporalPosition::At,
+            selector: SnowflakeTemporalSelector::Offset,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn cr033_snowflake_all_positions_and_selectors_roundtrip() {
+    let cases = [
+        (
+            "SELECT * FROM t AT(OFFSET => -60)",
+            "SELECT * FROM t AT (OFFSET => -60)",
+        ),
+        (
+            "SELECT * FROM t BEFORE(OFFSET => -30 * 2)",
+            "SELECT * FROM t BEFORE (OFFSET => -30 * 2)",
+        ),
+        (
+            "SELECT * FROM t AT(TIMESTAMP => '2024-01-01'::TIMESTAMP_LTZ)",
+            "SELECT * FROM t AT (TIMESTAMP => CAST('2024-01-01' AS TIMESTAMP_LTZ))",
+        ),
+        (
+            "SELECT * FROM t BEFORE(TIMESTAMP => TO_TIMESTAMP(123, 3))",
+            "SELECT * FROM t BEFORE (TIMESTAMP => TO_TIMESTAMP(123, 3))",
+        ),
+        (
+            "SELECT * FROM t AT(STATEMENT => '01b')",
+            "SELECT * FROM t AT (STATEMENT => '01b')",
+        ),
+        (
+            "SELECT * FROM t BEFORE(STATEMENT => LAST_QUERY_ID())",
+            "SELECT * FROM t BEFORE (STATEMENT => LAST_QUERY_ID())",
+        ),
+        (
+            "SELECT * FROM t AT(STREAM => 'changes')",
+            "SELECT * FROM t AT (STREAM => 'changes')",
+        ),
+    ];
+    for (sql, expected) in cases {
+        cr033_roundtrip(sql, expected, Dialect::Snowflake);
+    }
+}
+
+#[test]
+fn cr033_tsql_system_time_forms_roundtrip() {
+    let cases = [
+        "SELECT * FROM t FOR SYSTEM_TIME AS OF @point AS h",
+        "SELECT * FROM t FOR SYSTEM_TIME FROM @start TO @end AS h",
+        "SELECT * FROM t FOR SYSTEM_TIME BETWEEN @start AND @end AS h",
+        "SELECT * FROM t FOR SYSTEM_TIME CONTAINED IN (@start, @end) AS h",
+        "SELECT * FROM t FOR SYSTEM_TIME ALL AS h",
+    ];
+    for sql in cases {
+        cr033_roundtrip(sql, sql, Dialect::Tsql);
+    }
+}
+
+#[test]
+fn cr033_oracle_flashback_forms_roundtrip() {
+    let cases = [
+        "SELECT * FROM t AS OF SCN 42 h",
+        "SELECT * FROM t AS OF TIMESTAMP :point h",
+        "SELECT * FROM t VERSIONS BETWEEN SCN 1 AND 2 h",
+        "SELECT * FROM t VERSIONS BETWEEN TIMESTAMP :start AND :end h",
+    ];
+    for sql in cases {
+        cr033_roundtrip(sql, sql, Dialect::Oracle);
+    }
+}
+
+#[test]
+fn cr033_bigquery_spark_databricks_and_hive_roundtrip() {
+    let cases = [
+        (
+            "SELECT * FROM t FOR SYSTEM_TIME AS OF TIMESTAMP('2024-01-01') AS h",
+            Dialect::BigQuery,
+        ),
+        ("SELECT * FROM t VERSION AS OF 42 AS h", Dialect::Databricks),
+        (
+            "SELECT * FROM t TIMESTAMP AS OF current_timestamp() - INTERVAL '12' HOUR AS h",
+            Dialect::Spark,
+        ),
+        (
+            "SELECT * FROM t FOR SYSTEM_TIME AS OF '2024-01-01' AS h",
+            Dialect::Hive,
+        ),
+        (
+            "SELECT * FROM t FOR SYSTEM_VERSION AS OF 42 AS h",
+            Dialect::Hive,
+        ),
+    ];
+    for (sql, dialect) in cases {
+        let expected = if matches!(dialect, Dialect::Spark) {
+            "SELECT * FROM t TIMESTAMP AS OF CURRENT_TIMESTAMP() - INTERVAL '12' HOUR AS h"
+        } else {
+            sql
+        };
+        cr033_roundtrip(sql, expected, dialect);
+    }
+}
+
+#[test]
+fn cr033_preserves_qualified_quoted_joined_and_nested_sources() {
+    let cases = [
+        "SELECT h.id FROM db.sch.\"orders\" AT(OFFSET => -60) h INNER JOIN db.sch.customers BEFORE(STATEMENT => '01b') c ON h.id = c.id",
+        "WITH h AS (SELECT * FROM orders AT(TIMESTAMP => '2024-01-01')) SELECT * FROM h",
+        "SELECT * FROM (SELECT * FROM orders AT(OFFSET => -60)) h",
+        "SELECT * FROM orders AT(OFFSET => -60) UNION ALL SELECT * FROM orders BEFORE(OFFSET => -120)",
+        "SELECT (SELECT COUNT(*) FROM orders AT(OFFSET => -60)) FROM customers",
+    ];
+    for sql in cases {
+        let ast = parse(sql, Dialect::Snowflake).unwrap();
+        let generated = generate(&ast, Dialect::Snowflake);
+        let reparsed = parse(&generated, Dialect::Snowflake).unwrap();
+        assert_eq!(reparsed, ast, "nested temporal source changed for {sql}");
+    }
+}
+
+#[test]
+fn cr033_rejects_malformed_temporal_clauses() {
+    let malformed = [
+        "SELECT * FROM t AT(OFFSET -60)",
+        "SELECT * FROM t AT(BOGUS => -60)",
+        "SELECT * FROM t AT(OFFSET =>)",
+        "SELECT * FROM t AT(OFFSET => -60",
+        "SELECT * FROM t FOR SYSTEM_TIME BETWEEN @start",
+        "SELECT * FROM t FOR SYSTEM_TIME CONTAINED IN (@start)",
+        "SELECT * FROM t VERSIONS BETWEEN VALUE 1 AND 2",
+        "SELECT * FROM t VERSION AS OF",
+        "SELECT * FROM t AS h AT(OFFSET => -60)",
+    ];
+    for sql in malformed {
+        assert!(
+            parse(sql, Dialect::Snowflake).is_err(),
+            "malformed temporal clause parsed successfully: {sql}"
+        );
+    }
+}
+
+#[test]
+fn cr033_single_statement_parse_rejects_trailing_tokens() {
+    let cases = [
+        "SELECT * FROM t AT(OFFSET => -60) garbage extra",
+        "SELECT * FROM t AS h AT(OFFSET => -60)",
+        "SELECT * FROM t FOR SYSTEM_TIME ALL AS h garbage",
+    ];
+    for sql in cases {
+        assert!(
+            parse(sql, Dialect::Snowflake).is_err(),
+            "single-statement parse ignored trailing tokens: {sql}"
+        );
+    }
+
+    assert_eq!(
+        transpile_statements(
+            "SELECT * FROM t AT(OFFSET => -60); SELECT * FROM u",
+            Dialect::Snowflake,
+            Dialect::Snowflake,
+        )
+        .unwrap(),
+        vec![
+            "SELECT * FROM t AT (OFFSET => -60)".to_string(),
+            "SELECT * FROM u".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn cr033_rejects_unsupported_target_dialects_in_all_core_paths() {
+    let sql = "SELECT * FROM t AT(OFFSET => -60)";
+    assert!(matches!(
+        transpile(sql, Dialect::Snowflake, Dialect::Postgres),
+        Err(SqlglotError::UnsupportedDialectFeature(_))
+    ));
+    assert!(matches!(
+        transpile_statements(sql, Dialect::Snowflake, Dialect::Postgres),
+        Err(SqlglotError::UnsupportedDialectFeature(_))
+    ));
+    assert!(matches!(
+        transpile_with_comments(
+            "SELECT * FROM t /* point */ AT(OFFSET => -60)",
+            Dialect::Snowflake,
+            Dialect::Postgres,
+        ),
+        Err(SqlglotError::UnsupportedDialectFeature(_))
+    ));
+    assert!(matches!(
+        transpile(
+            "SELECT * FROM t FOR SYSTEM_TIME BETWEEN @start AND @end",
+            Dialect::Tsql,
+            Dialect::BigQuery,
+        ),
+        Err(SqlglotError::UnsupportedDialectFeature(_))
+    ));
+
+    assert!(matches!(
+        transpile(
+            "UPDATE current_rows SET value = (SELECT value FROM history AT(OFFSET => -60))",
+            Dialect::Snowflake,
+            Dialect::Postgres,
+        ),
+        Err(SqlglotError::UnsupportedDialectFeature(_))
+    ));
+
+    let mut update = parse("UPDATE t SET value = 1", Dialect::Snowflake).unwrap();
+    let Statement::Update(statement) = &mut update else {
+        panic!("expected UPDATE");
+    };
+    statement.table.temporal = Some(TableTemporalClause::Snowflake {
+        position: SnowflakeTemporalPosition::At,
+        selector: SnowflakeTemporalSelector::Offset,
+        expression: Box::new(sqlglot_rust::ast::Expr::Number("-60".to_string())),
+    });
+    assert!(matches!(
+        validate_dialect_support(&update, Dialect::Snowflake),
+        Err(SqlglotError::UnsupportedDialectFeature(_))
+    ));
+}
+
+#[test]
+fn cr033_temporal_false_positive_controls() {
+    cr033_roundtrip(
+        "SELECT * FROM f(1) AS x",
+        "SELECT * FROM f(1) AS x",
+        Dialect::Snowflake,
+    );
+    cr033_roundtrip(
+        "SELECT * FROM t AS of",
+        "SELECT * FROM t of",
+        Dialect::Oracle,
+    );
+    cr033_roundtrip(
+        "SELECT ts AT TIME ZONE 'UTC' FROM t",
+        "SELECT ts AT TIME ZONE 'UTC' FROM t",
+        Dialect::Postgres,
+    );
+    cr033_roundtrip(
+        "SELECT 'AT(OFFSET => -60)' FROM t",
+        "SELECT 'AT(OFFSET => -60)' FROM t",
+        Dialect::Snowflake,
+    );
+    cr033_roundtrip(
+        "SELECT \"AT\" FROM t",
+        "SELECT \"AT\" FROM t",
+        Dialect::Snowflake,
     );
 }

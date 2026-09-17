@@ -840,9 +840,29 @@ pub struct TableRef {
     pub schema: Option<String>,
     pub name: String,
     pub alias: Option<String>,
+    pub temporal: Option<TableTemporalClause>,
     pub name_quote_style: QuoteStyle,
 }
 ```
+
+`temporal` preserves table-level historical selectors as typed AST nodes. Supported
+families include Snowflake `AT`/`BEFORE`, SQL Server and BigQuery
+`FOR SYSTEM_TIME`, Oracle flashback queries, Spark/Databricks `VERSION AS OF`
+and `TIMESTAMP AS OF`, and Hive Iceberg `FOR SYSTEM_VERSION AS OF`.
+
+```rust
+pub enum TableTemporalClause {
+    Snowflake { position: SnowflakeTemporalPosition, selector: SnowflakeTemporalSelector, expression: Box<Expr> },
+    SystemTime(SystemTimeSpec),
+    OracleFlashback(OracleFlashbackSpec),
+    VersionAsOf { kind: VersionAsOfKind, expression: Box<Expr> },
+    SystemVersionAsOf { expression: Box<Expr> },
+}
+```
+
+Temporal clauses are generated between the qualified table name and its alias.
+Transpilation returns `UnsupportedDialectFeature` when the target has no proven
+equivalent instead of silently querying the current table.
 
 ### JoinClause / JoinType
 

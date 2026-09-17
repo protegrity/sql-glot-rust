@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use sqlglot_rust::SqlglotError;
 use sqlglot_rust::executor::{Table, Value, execute};
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -105,6 +106,17 @@ fn sample_tables() -> HashMap<String, Table> {
     );
 
     tables
+}
+
+#[test]
+fn temporal_table_scan_fails_closed() {
+    assert!(matches!(
+        execute(
+            "SELECT * FROM employees AT(OFFSET => -60)",
+            &sample_tables(),
+        ),
+        Err(SqlglotError::UnsupportedDialectFeature(_))
+    ));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
