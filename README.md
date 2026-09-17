@@ -145,7 +145,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlglot-rust = "0.10.29"
+sqlglot-rust = "0.10.30"
 ```
 
 ### Parse and generate SQL
