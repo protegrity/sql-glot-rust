@@ -7168,12 +7168,15 @@ impl Parser {
                 }
             } else if matches!(
                 self.peek_type(),
-                TokenType::Not
-                    | TokenType::In
+                TokenType::In
                     | TokenType::Like
                     | TokenType::ILike
                     | TokenType::Between
-            ) {
+            ) || (self.peek_type() == &TokenType::Not
+                && matches!(
+                    self.tokens.get(self.pos + 1).map(|token| &token.token_type),
+                    Some(TokenType::In | TokenType::Like | TokenType::ILike | TokenType::Between)
+                )) {
                 // Peek ahead: if NOT, only consume it if followed by IN/LIKE/ILIKE/BETWEEN
                 if self.peek_type() == &TokenType::Not {
                     let saved_pos = self.pos;
