@@ -83,6 +83,11 @@ Complete type and function reference for **sqlglot-rust**.
   - [Memory Management](#memory-management)
   - [Build Targets](#build-targets)
   - [Output Artefacts](#output-artefacts)
+- [UniFFI API (Swift / Kotlin / Python)](#uniffi-api-swift--kotlin--python)
+  - [UniFFI Functions](#uniffi-functions)
+  - [SqlStatement](#sqlstatement)
+  - [SqlglotError](#sqlgloterror)
+  - [UniFFI Build Targets](#uniffi-build-targets)
 - [SQL Execution Engine](#sql-execution-engine)
   - [Value Enum](#value-enum)
   - [Table / Tables](#table--tables)
@@ -2272,6 +2277,61 @@ All `dialect` / `from_dialect` / `to_dialect` parameters accept a null-terminate
 | `target/ffi/include/sqlglot.h` | Auto-generated C header |
 | `target/ffi/lib/libsqlglot_rust.a` | Static library |
 | `target/ffi/lib/libsqlglot_rust.so` / `.dylib` | Shared (dynamic) library |
+
+---
+
+## UniFFI API (Swift / Kotlin / Python)
+
+Available with the `uniffi` Cargo feature, implemented in
+`sqlglot_rust::uniffi_api`. Integration guide: [Swift, Kotlin, and Python](uniffi.md).
+
+Signatures below use Rust names. Generated bindings follow each language's
+conventions: `parse_statements` becomes `parseStatements` in Swift and Kotlin,
+and `SqlglotError` becomes `SqlglotException` in Kotlin.
+
+### UniFFI Functions
+
+| Function | Returns | Description |
+| --- | --- | --- |
+| `parse(sql, dialect)` | `SqlStatement` | Parse a single statement |
+| `parse_statements(sql, dialect)` | `Vec<SqlStatement>` | Parse semicolon-separated statements |
+| `transpile(sql, read_dialect, write_dialect)` | `String` | Parse, apply dialect rewrites, validate, and generate. Same as the Rust [`transpile`](#top-level-functions) |
+| `version()` | `String` | Crate version |
+
+`dialect` parameters take the [`Dialect`](#dialect-list) enum.
+
+### SqlStatement
+
+Immutable, thread-safe handle to a parsed statement.
+
+| Member | Returns | Description |
+| --- | --- | --- |
+| `SqlStatement::from_json(json)` (constructor) | `SqlStatement` | Rebuild from AST JSON; raises `InvalidAst` if the JSON is not a valid statement |
+| `to_json()` | `String` | Full AST as JSON: the `serde` form of [`Statement`](#statement-enum), identical to the C API's `sqlglot_parse` output |
+| `generate(dialect)` | `String` | Render SQL for `dialect` without applying dialect rewrites; raises `UnsupportedDialectFeature` if the target cannot express the statement |
+| `generate_pretty(dialect)` | `String` | Pretty-printed variant of `generate` |
+
+### SqlglotError
+
+| Variant | Fields | Source |
+| --- | --- | --- |
+| `Tokenizer` | `detail: String`, `position: u64` | `SqlglotError::TokenizerError` |
+| `Parser` | `detail: String` | `SqlglotError::ParserError` and `SqlglotError::UnexpectedToken` |
+| `UnsupportedDialectFeature` | `detail: String` | `SqlglotError::UnsupportedDialectFeature` |
+| `InvalidAst` | `detail: String` | Invalid JSON passed to `SqlStatement::from_json` |
+| `Internal` | `detail: String` | `SqlglotError::Internal` |
+
+### UniFFI Build Targets
+
+| Target / feature | Description |
+| --- | --- |
+| `--features uniffi` | Compile the UniFFI scaffolding into the library |
+| `--features uniffi-bindgen` | Also build the `uniffi-bindgen` binary |
+| `make uniffi-bindings` | Release build + bindings in `target/uniffi/{swift,kotlin,python}` |
+| `make uniffi-test LANGS="python swift kotlin"` | Rust tests plus the generated-binding test suites (Kotlin needs `JNA_JAR`) |
+
+UniFFI is pinned to an exact version (`=0.32.2`). Bindings and native library
+must come from the same build.
 
 ---
 

@@ -76,6 +76,7 @@ the AST, optimizing queries, and serializing results.
   - [C Example](#c-example)
   - [C++ Example with RAII](#c-example-with-raii)
   - [Linking](#linking)
+- [Swift, Kotlin, and Python Bindings](#swift-kotlin-and-python-bindings)
 - [Error Handling](#error-handling)
 - [SBOM Generation](#sbom-generation)
 - [Updating the Version](#updating-the-version)
@@ -1915,6 +1916,28 @@ DYLD_LIBRARY_PATH=target/ffi/lib ./example  # macOS
 See [`examples/ffi_example.c`](../examples/ffi_example.c) and
 [`examples/ffi_example.cpp`](../examples/ffi_example.cpp) for complete working
 examples.
+
+---
+
+## Swift, Kotlin, and Python Bindings
+
+The optional `uniffi` feature generates idiomatic bindings for Swift, Kotlin,
+and Python, with typed dialects, typed errors, and automatic memory
+management. No manual `free` calls are needed, unlike the C API.
+
+```bash
+make uniffi-bindings   # writes target/uniffi/{swift,kotlin,python}
+```
+
+```swift
+let statement = try parse(sql: "SELECT a, b FROM t WHERE a > 1", dialect: .postgres)
+print(try statement.generatePretty(dialect: .postgres))
+print(try transpile(sql: "SELECT * FROM t LIMIT 10", readDialect: .mysql, writeDialect: .tsql))
+// SELECT TOP 10 * FROM t
+```
+
+See the **[Swift, Kotlin, and Python guide](uniffi.md)** for platform
+integration and the [UniFFI API reference](reference.md#uniffi-api-swift--kotlin--python).
 
 ---
 

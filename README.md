@@ -8,6 +8,7 @@ A SQL parser, optimizer, and transpiler library written in Rust, inspired by Pyt
 - **Generate** SQL from AST nodes
 - **Transpile** between 30 SQL dialects
 - **C/C++ FFI** — shared & static libraries with a C header for integration from C, C++, or any language with C ABI support
+- **Swift, Kotlin & Python** — optional [UniFFI](https://mozilla.github.io/uniffi-rs/) bindings for macOS/iOS, JVM/Android, and Python ([guide](docs/uniffi.md))
 - **CLI** — command-line interface for transpiling, parsing, and formatting SQL
 - **Expression Builder API** — fluent builders for programmatic SQL construction
 - **Typed function expressions** — 72+ functions across 8 categories with dialect-specific generation
@@ -423,6 +424,11 @@ The optional `uniffi` feature exposes parsing, generation, transpilation, and
 AST access through [UniFFI](https://mozilla.github.io/uniffi-rs/). Default
 builds and the C API are unaffected.
 
+**See the [Swift, Kotlin, and Python guide](docs/uniffi.md)** for step-by-step
+integration on each platform (Python packages, Swift Package + XCFramework for
+macOS/iOS, Gradle for JVM, Android), AST access, error handling, and
+troubleshooting.
+
 ### Generate the bindings
 
 ```bash
@@ -430,11 +436,8 @@ make uniffi-bindings
 ```
 
 This builds `target/release/libsqlglot_rust.{dylib,so}` and writes bindings to
-`target/uniffi/{swift,kotlin,python}`. Ship the native library alongside them:
-
-- **Python**: put `sqlglot_rust.py` and the native library in the same directory, then `import sqlglot_rust`.
-- **Swift**: compile `sqlglot_rust.swift` with `-Xcc -fmodule-map-file=sqlglot_rustFFI.modulemap` and link `-lsqlglot_rust`. For an XCFramework, rename the modulemap to `module.modulemap`.
-- **Kotlin**: add `uniffi/sqlglot_rust/sqlglot_rust.kt` to your sources, depend on JNA 5.12+, and put the native library on `jna.library.path`.
+`target/uniffi/{swift,kotlin,python}`. Always ship the bindings together with
+the native library from the same build.
 
 ### API
 
@@ -453,10 +456,10 @@ This builds `target/release/libsqlglot_rust.{dylib,so}` and writes bindings to
 `UnsupportedDialectFeature`, `InvalidAst`, and `Internal`.
 
 ```python
-import sqlglot_rust as sg
+import sqlglot_rust as sg   # sqlglot_rust.py next to libsqlglot_rust.{dylib,so}
 
-statement = sg.parse("SELECT * FROM t LIMIT 10", sg.Dialect.MYSQL)
-print(statement.to_json())
+statement = sg.parse("SELECT a, b FROM t WHERE a > 1", sg.Dialect.POSTGRES)
+print(statement.to_json())   # full AST as JSON
 print(sg.transpile("SELECT * FROM t LIMIT 10", sg.Dialect.MYSQL, sg.Dialect.TSQL))
 # SELECT TOP 10 * FROM t
 ```
@@ -473,6 +476,7 @@ JNA_JAR=/path/to/jna.jar make uniffi-test LANGS=kotlin
 - **[Installation](docs/installation.md)** — Dependency setup and verification
 - **[Developer Guide](docs/developer-guide.md)** — Parsing, generating, transpiling, AST traversal, optimization, and serialization with full code examples
 - **[API Reference](docs/reference.md)** — Complete type catalog, function signatures, dialect tables, and error variants
+- **[Swift, Kotlin, and Python](docs/uniffi.md)** — Integrating the UniFFI bindings on each platform
 
 ## Architecture
 
@@ -492,7 +496,8 @@ src/
 ├── parser/       # Recursive-descent SQL parser
 ├── planner/      # Logical query planner (execution plan DAG)
 ├── schema/       # Schema management (MappingSchema, dialect-aware lookups)
-└── tokens/       # Token types (~200+ variants) and tokenizer
+├── tokens/       # Token types (~200+ variants) and tokenizer
+└── uniffi_api.rs # Swift/Kotlin/Python bindings — feature-gated behind "uniffi"
 ```
 
 ## Development

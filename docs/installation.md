@@ -17,6 +17,9 @@ For C/C++ FFI usage, you'll also need:
 - A C or C++ compiler (`gcc`, `clang`, `g++`, or MSVC)
 - `cbindgen` for header generation (`cargo install cbindgen`)
 
+For Swift, Kotlin, or Python bindings, see the per-language prerequisites in
+the [UniFFI guide](uniffi.md#prerequisites).
+
 ---
 
 ## Add the Dependency
@@ -158,9 +161,33 @@ for usage examples.
 
 ---
 
+## Building for Swift, Kotlin, and Python (UniFFI)
+
+The optional `uniffi` feature adds bindings generated with
+[UniFFI](https://mozilla.github.io/uniffi-rs/). From a checkout of this
+repository:
+
+```bash
+make uniffi-bindings
+```
+
+| File | Description |
+| --- | --- |
+| `target/release/libsqlglot_rust.dylib` (or `.so`) | Native library to ship with the bindings |
+| `target/uniffi/python/sqlglot_rust.py` | Python module |
+| `target/uniffi/swift/sqlglot_rust.swift` + `sqlglot_rustFFI.{h,modulemap}` | Swift source and C module |
+| `target/uniffi/kotlin/uniffi/sqlglot_rust/sqlglot_rust.kt` | Kotlin source (requires JNA) |
+
+See the **[Swift, Kotlin, and Python guide](uniffi.md)** for per-platform
+integration steps.
+
+---
+
 ## Next Steps
 
 - **[Developer Guide](developer-guide.md)** — Parsing, generating, transpiling,
   working with the AST, optimization, and serialization with full code examples.
 - **[Reference](reference.md)** — Complete API surface, type catalog, dialect
   tables, and error variants.
+- **[Swift, Kotlin, and Python](uniffi.md)** — Use sqlglot-rust from other
+  languages through UniFFI.
