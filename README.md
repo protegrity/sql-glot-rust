@@ -417,6 +417,57 @@ gcc example.c -Itarget/ffi/include -Ltarget/release -lsqlglot_rust -lpthread -ld
 LD_LIBRARY_PATH=target/release ./example
 ```
 
+## Swift, Kotlin, and Python (UniFFI)
+
+The optional `uniffi` feature exposes parsing, generation, transpilation, and
+AST access through [UniFFI](https://mozilla.github.io/uniffi-rs/). Default
+builds and the C API are unaffected.
+
+### Generate the bindings
+
+```bash
+make uniffi-bindings
+```
+
+This builds `target/release/libsqlglot_rust.{dylib,so}` and writes bindings to
+`target/uniffi/{swift,kotlin,python}`. Ship the native library alongside them:
+
+- **Python**: put `sqlglot_rust.py` and the native library in the same directory, then `import sqlglot_rust`.
+- **Swift**: compile `sqlglot_rust.swift` with `-Xcc -fmodule-map-file=sqlglot_rustFFI.modulemap` and link `-lsqlglot_rust`. For an XCFramework, rename the modulemap to `module.modulemap`.
+- **Kotlin**: add `uniffi/sqlglot_rust/sqlglot_rust.kt` to your sources, depend on JNA 5.12+, and put the native library on `jna.library.path`.
+
+### API
+
+| Function / method | Description |
+| --- | --- |
+| `parse(sql, dialect)` | Parse one statement into a `SqlStatement` |
+| `parseStatements(sql, dialect)` | Parse semicolon-separated statements |
+| `transpile(sql, readDialect, writeDialect)` | Parse, apply dialect rewrites, and generate |
+| `SqlStatement.generate(dialect)` / `generatePretty(dialect)` | Render the AST as SQL |
+| `SqlStatement.toJson()` / `SqlStatement.fromJson(json)` | Read or rebuild the full AST (same JSON schema as the C API) |
+| `version()` | Library version |
+
+`generate` renders the AST as-is; use `transpile` for cross-dialect conversion
+(for example `LIMIT` → `TOP`). Failures raise `SqlglotError` (Kotlin:
+`SqlglotException`) with the cases `Tokenizer`, `Parser`,
+`UnsupportedDialectFeature`, `InvalidAst`, and `Internal`.
+
+```python
+import sqlglot_rust as sg
+
+statement = sg.parse("SELECT * FROM t LIMIT 10", sg.Dialect.MYSQL)
+print(statement.to_json())
+print(sg.transpile("SELECT * FROM t LIMIT 10", sg.Dialect.MYSQL, sg.Dialect.TSQL))
+# SELECT TOP 10 * FROM t
+```
+
+### Test the bindings
+
+```bash
+make uniffi-test LANGS="python swift"
+JNA_JAR=/path/to/jna.jar make uniffi-test LANGS=kotlin
+```
+
 ## Documentation
 
 - **[Installation](docs/installation.md)** — Dependency setup and verification

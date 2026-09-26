@@ -18,6 +18,8 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 [features]
 default = []
 cli = ["clap"]
+uniffi = ["dep:uniffi"]
+uniffi-bindgen = ["uniffi", "uniffi/cli", "uniffi/cargo-metadata"]
 
 [dependencies]
 thiserror = "2"
@@ -25,11 +27,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
 clap = { version = "4", features = ["derive"], optional = true }
+# Exact pin: generated bindings verify checksums against this runtime version.
+uniffi = { version = "=0.32.2", optional = true, default-features = false }
 
 [[bin]]
 name = "sqlglot"
 path = "src/bin/sqlglot.rs"
 required-features = ["cli"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["uniffi-bindgen"]
 
 [dev-dependencies]
 pretty_assertions = "1"

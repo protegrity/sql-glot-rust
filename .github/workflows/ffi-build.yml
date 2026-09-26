@@ -147,3 +147,45 @@ jobs:
             -lpthread -ldl -lm \
             -o smoke
           LD_LIBRARY_PATH=sqlglot-ffi-linux-amd64/lib ./smoke
+
+  uniffi:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            languages: python swift
+          - os: ubuntu-latest
+            languages: python kotlin
+    runs-on: ${{ matrix.os }}
+    name: uniffi (${{ matrix.languages }})
+    env:
+      JNA_VERSION: "5.17.0"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust tests for the UniFFI facade
+        run: |
+          cargo test --features uniffi --lib uniffi_api
+          cargo test --features uniffi --test test_uniffi
+
+      - name: Install Kotlin and JNA
+        if: contains(matrix.languages, 'kotlin')
+        shell: bash
+        run: |
+          command -v kotlinc || { curl -s https://get.sdkman.io | bash; source "$HOME/.sdkman/bin/sdkman-init.sh"; sdk install kotlin; }
+          mkdir -p target/jna
+          JAR="target/jna/jna-${JNA_VERSION}.jar"
+          BASE="https://repo1.maven.org/maven2/net/java/dev/jna/jna/${JNA_VERSION}/jna-${JNA_VERSION}.jar"
+          curl -sfL -o "$JAR" "$BASE"
+          echo "$(curl -sfL "$BASE.sha1" | cut -c1-40)  $JAR" | sha1sum -c -
+          echo "JNA_JAR=$PWD/$JAR" >> "$GITHUB_ENV"
+
+      - name: Generated-binding tests
+        shell: bash
+        run: |
+          [[ -f "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
+          scripts/uniffi_bindings_test.sh ${{ matrix.languages }}

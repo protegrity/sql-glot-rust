@@ -44,6 +44,11 @@ pub mod parser;
 pub mod planner;
 pub mod schema;
 pub mod tokens;
+#[cfg(feature = "uniffi")]
+pub mod uniffi_api;
+
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
 
 pub use ast::{CommentType, Expr, MergeClauseKind, QuoteStyle, Statement};
 pub use builder::{

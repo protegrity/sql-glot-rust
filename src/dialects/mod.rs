@@ -11,6 +11,7 @@ pub mod time;
 /// Dialects are grouped into **Official** (core, higher-priority maintenance)
 /// and **Community** (contributed, fully functional) tiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum Dialect {
     // ── Core / base ──────────────────────────────────────────────────────
     /// ANSI SQL standard (default / base dialect)

@@ -2,7 +2,8 @@
        ffi ffi-header ffi-all ffi-macos-arm64 ffi-macos-amd64 ffi-linux-amd64 ffi-linux-arm64 \
        cli cli-target cli-macos-arm64 cli-macos-amd64 cli-linux-amd64 cli-linux-arm64 cli-all \
        dist dist-all \
-       pkg-deb pkg-rpm
+       pkg-deb pkg-rpm \
+       uniffi-bindings uniffi-test
 
 all: build sbom
 
@@ -76,6 +77,26 @@ ffi: ffi-header
 ## Build all four platform/arch combinations
 ffi-all: ffi-macos-arm64 ffi-macos-amd64 ffi-linux-amd64 ffi-linux-arm64
 	@echo "All FFI targets built → $(FFI_OUT)/"
+
+# ── UniFFI bindings (Swift / Kotlin / Python) ────────────────────────────
+
+UNIFFI_OUT = target/uniffi
+UNIFFI_LIB = target/release/libsqlglot_rust.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
+
+## Generate Swift, Kotlin, and Python bindings from a release build
+uniffi-bindings:
+	cargo build --release --features uniffi-bindgen --lib --bin uniffi-bindgen
+	@for lang in swift kotlin python; do \
+		target/release/uniffi-bindgen generate --no-format --library $(UNIFFI_LIB) \
+			--language $$lang --out-dir $(UNIFFI_OUT)/$$lang || exit 1; \
+	done
+	@echo "Bindings written to $(UNIFFI_OUT)/{swift,kotlin,python}; native library: $(UNIFFI_LIB)"
+
+## Run the generated-binding tests (LANGS="python swift kotlin"; kotlin needs JNA_JAR)
+uniffi-test:
+	cargo test --features uniffi --lib uniffi_api
+	cargo test --features uniffi --test test_uniffi
+	scripts/uniffi_bindings_test.sh $(LANGS)
 
 # ── CLI cross-compilation targets ─────────────────────────────────────────
 
