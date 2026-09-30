@@ -7012,12 +7012,42 @@ impl Parser {
                 TokenType::GtEq => Some(BinaryOperator::GtEq),
                 TokenType::AtArrow => Some(BinaryOperator::AtArrow),
                 TokenType::ArrowAt => Some(BinaryOperator::ArrowAt),
-                // PostgreSQL geometric / regex operators starting with `~`:
-                //   ~=, ~<, ~>, ~<=, ~>=, ~~, ~~*, !~, !~*. We lower all of
-                //   them to a generic Eq comparison so the surrounding
-                //   expression parses; the bench only cares about acceptance.
+                // Preserve PostgreSQL regex operators; retain the existing
+                // fallback for geometric and LIKE-like operators.
                 TokenType::BitwiseNot => {
+                    let negative = self.peek().value.starts_with('!');
+                    let fused_insensitive = self.peek().value.ends_with('*');
                     self.advance();
+                    // Preserve regex semantics, including negation, instead
+                    // of lowering a PostgreSQL name/pattern test to equality.
+                    if negative
+                        || !matches!(
+                            self.peek_type(),
+                            TokenType::Eq | TokenType::Lt | TokenType::Gt
+                                | TokenType::LtEq | TokenType::GtEq | TokenType::BitwiseNot
+                        )
+                    {
+                        let insensitive = fused_insensitive || self.match_token(TokenType::Star);
+                        let pattern = self.parse_addition()?;
+                        let regex = Expr::TypedFunction {
+                            func: TypedFunction::RegexpLike {
+                                expr: Box::new(left),
+                                pattern: Box::new(pattern),
+                                flags: insensitive.then(|| Box::new(Expr::StringLiteral("i".into()))),
+                            },
+                            filter: None,
+                            over: None,
+                        };
+                        left = if negative {
+                            Expr::UnaryOp {
+                                op: UnaryOperator::Not,
+                                expr: Box::new(regex),
+                            }
+                        } else {
+                            regex
+                        };
+                        continue;
+                    }
                     // Optional follow-up: =, <, >, <=, >=, ~, ~*, *.
                     let _ = match self.peek_type() {
                         TokenType::Eq

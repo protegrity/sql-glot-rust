@@ -490,6 +490,15 @@ impl Tokenizer {
                 if self.peek() == Some('=') {
                     self.advance();
                     Ok(self.make_token(TokenType::Neq, "!=", start, start_line, start_col))
+                } else if self.peek() == Some('~') {
+                    self.advance();
+                    let operator = if self.peek() == Some('*') {
+                        self.advance();
+                        "!~*"
+                    } else {
+                        "!~"
+                    };
+                    Ok(self.make_token(TokenType::BitwiseNot, operator, start, start_line, start_col))
                 } else {
                     Err(SqlglotError::TokenizerError {
                         message: format!("Unexpected character: {ch}"),
