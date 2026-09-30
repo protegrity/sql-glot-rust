@@ -3599,6 +3599,10 @@ impl Generator {
                 if let Some(d) = decimals {
                     self.write(", ");
                     self.gen_expr(d);
+                } else if dialect == Some(Dialect::Tsql) {
+                    // SQL Server requires a length argument; omitted scale in
+                    // the source dialect means round to an integer.
+                    self.write(", 0");
                 }
                 self.write(")");
             }
