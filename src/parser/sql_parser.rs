@@ -1780,12 +1780,17 @@ impl Parser {
         let group_by = if self.match_token(TokenType::Group) {
             self.expect(TokenType::By)?;
             let items = self.parse_group_by_list()?;
-            // ClickHouse / MySQL `GROUP BY ... WITH ROLLUP|CUBE|TOTALS` —
-            // swallow the modifier; we don't model it in the AST.
-            if self.match_token(TokenType::With) {
-                let _ = self.match_token(TokenType::Rollup)
-                    || self.match_token(TokenType::Cube)
-                    || self.match_keyword("TOTALS");
+            // Unmodeled ClickHouse / MySQL GROUP BY modifiers
+            // Leave WITH [NO] DATA for the enclosing CTAS parser
+            if self.peek_type() == &TokenType::With
+                && self.peek_offset(1).is_some_and(|token| {
+                    matches!(token.token_type, TokenType::Rollup | TokenType::Cube)
+                        || (token.token_type == TokenType::Identifier
+                            && token.value.eq_ignore_ascii_case("TOTALS"))
+                })
+            {
+                self.advance();
+                self.advance();
             }
             // Hive / Spark `GROUP BY k1, k2 GROUPING SETS ((k1), (k2))` —
             // swallow the trailing parenthesized list.
@@ -5076,6 +5081,92 @@ impl Parser {
 
     // ── CREATE ──────────────────────────────────────────────────────
 
+    fn parse_ctas_properties(&mut self) -> Result<Vec<TableProperty>> {
+        let next = self.tokens[self.pos..].iter().find(|token| {
+            !matches!(
+                token.token_type,
+                TokenType::LineComment | TokenType::BlockComment
+            )
+        });
+        if !next.is_some_and(|token| token.token_type == TokenType::With) {
+            return Ok(Vec::new());
+        }
+
+        // TableProperty has no comments field; attach comments to the query
+        self.collect_comments();
+        self.advance(); // WITH
+        self.collect_comments();
+        self.expect(TokenType::LParen)?;
+        let mut properties = Vec::new();
+        loop {
+            self.collect_comments();
+            let (name, quote_style) = self.expect_name_with_quote()?;
+            self.collect_comments();
+            self.expect(TokenType::Eq)?;
+            self.collect_comments();
+            let value = self.parse_expr()?;
+            properties.push(TableProperty {
+                name,
+                quote_style,
+                value,
+            });
+            self.collect_comments();
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenType::RParen)?;
+        self.collect_comments();
+        Ok(properties)
+    }
+
+    fn parse_ctas_data_clause(&mut self) -> Option<bool> {
+        // A following CTE may be named DATA; match the whole clause first
+        let mut tokens = self.tokens[self.pos..].iter().filter(|token| {
+            !matches!(
+                token.token_type,
+                TokenType::LineComment | TokenType::BlockComment
+            )
+        });
+        if !matches!(
+            tokens.next().map(|token| &token.token_type),
+            Some(TokenType::With)
+        ) {
+            return None;
+        }
+        let is_keyword = |token: &Token, word: &str| {
+            token.token_type == TokenType::Identifier
+                && token.quote_char == '\0'
+                && token.value.eq_ignore_ascii_case(word)
+        };
+        let next = tokens.next()?;
+        let populate = if is_keyword(next, "DATA") {
+            true
+        } else if is_keyword(next, "NO")
+            && tokens.next().is_some_and(|token| is_keyword(token, "DATA"))
+        {
+            false
+        } else {
+            return None;
+        };
+        if !tokens
+            .next()
+            .is_some_and(|token| matches!(token.token_type, TokenType::Eof | TokenType::Semicolon))
+        {
+            return None;
+        }
+
+        self.collect_comments();
+        self.advance(); // WITH
+        self.collect_comments();
+        if !populate {
+            self.advance(); // NO
+            self.collect_comments();
+        }
+        self.advance(); // DATA
+        Some(populate)
+    }
+
     fn parse_create(&mut self) -> Result<Statement> {
         self.expect(TokenType::Create)?;
 
@@ -5109,9 +5200,40 @@ impl Parser {
 
         let table = self.parse_table_ref_no_alias()?;
 
+        let with_properties = self.parse_ctas_properties()?;
+        let is_ctas = if with_properties.is_empty() {
+            self.match_token(TokenType::As)
+        } else {
+            self.expect(TokenType::As)?;
+            true
+        };
+
         // CREATE TABLE ... AS SELECT ...
-        if self.match_token(TokenType::As) {
-            let query = self.parse_statement_inner()?;
+        if is_ctas {
+            let mut query = self.parse_statement_inner()?;
+            let with_data = self.parse_ctas_data_clause();
+            if !with_properties.is_empty() || with_data.is_some() {
+                // CTAS clauses must stay separate from unparsed query text
+                let query_comments = match &mut query {
+                    Statement::Select(select) => &mut select.comments,
+                    Statement::SetOperation(set) => &mut set.comments,
+                    _ => {
+                        return Err(SqlglotError::ParserError {
+                            message: "CTAS query has no structured representation".into(),
+                        });
+                    }
+                };
+                self.collect_comments();
+                query_comments.extend(self.take_comments());
+                if or_replace
+                    || materialized
+                    || !matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon)
+                {
+                    return Err(SqlglotError::ParserError {
+                        message: "CTAS contains syntax without an AST representation".into(),
+                    });
+                }
+            }
             // Greenplum / Citus / etc. trailing `DISTRIBUTED BY (...)` /
             // `DISTRIBUTED RANDOMLY` / `DISTRIBUTED REPLICATED`. Swallow.
             if self.check_keyword("DISTRIBUTED") {
@@ -5148,7 +5270,9 @@ impl Parser {
                 table,
                 columns: vec![],
                 constraints: vec![],
+                with_properties,
                 as_select: Some(Box::new(query)),
+                with_data,
             }));
         }
 
@@ -5192,7 +5316,9 @@ impl Parser {
             table,
             columns,
             constraints,
+            with_properties,
             as_select: None,
+            with_data: None,
         }))
     }
 
@@ -11037,6 +11163,35 @@ mod tests {
             }
             _ => panic!("Expected CREATE TABLE"),
         }
+    }
+
+    #[test]
+    fn test_parse_ctas_property_values() {
+        let stmt = Parser::new(
+            "CREATE TABLE t WITH (\"format\" = 'ORC', delete_after_commit_enabled = true, max_commit_retry = 8) AS SELECT id FROM source",
+        )
+        .unwrap()
+        .parse_statement()
+        .unwrap();
+        let Statement::CreateTable(table) = stmt else {
+            panic!("expected CREATE TABLE");
+        };
+        assert_eq!(table.with_properties.len(), 3);
+        assert_eq!(table.with_properties[0].name, "format");
+        assert_eq!(
+            table.with_properties[0].quote_style,
+            QuoteStyle::DoubleQuote
+        );
+        assert_eq!(
+            table.with_properties[0].value,
+            Expr::StringLiteral("ORC".into())
+        );
+        assert_eq!(table.with_properties[1].value, Expr::Boolean(true));
+        assert_eq!(table.with_properties[2].value, Expr::Number("8".into()));
+        assert!(matches!(
+            table.as_select.as_deref(),
+            Some(Statement::Select(_))
+        ));
     }
 
     #[test]

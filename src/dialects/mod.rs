@@ -755,6 +755,9 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
         }
         // DDL: map data types in CREATE TABLE column definitions
         Statement::CreateTable(ct) => {
+            for property in &mut ct.with_properties {
+                property.value = transform_expr(property.value.clone(), target);
+            }
             for col in &mut ct.columns {
                 col.data_type = map_data_type(col.data_type.clone(), target);
                 if let Some(default) = &mut col.default {

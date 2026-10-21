@@ -1759,8 +1759,28 @@ pub struct CreateTableStatement {
     pub table: TableRef,
     pub columns: Vec<ColumnDef>,
     pub constraints: Vec<TableConstraint>,
+    /// Properties from the CTAS `WITH` clause, in source order
+    /// SQL generation ignores them when `as_select` is `None`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub with_properties: Vec<TableProperty>,
     /// CREATE TABLE ... AS SELECT ...
     pub as_select: Option<Box<Statement>>,
+    /// `Some(true)` for `WITH DATA`, `Some(false)` for `WITH NO DATA`
+    /// `None` when no separate population clause was parsed
+    /// Unparsed query text may contain the clause
+    /// SQL generation ignores this field when `as_select` is `None`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with_data: Option<bool>,
+}
+
+/// A named table property with an expression value
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TableProperty {
+    pub name: String,
+    /// Quoting used for the property name in the source SQL
+    #[serde(default)]
+    pub quote_style: QuoteStyle,
+    pub value: Expr,
 }
 
 /// Table-level constraints.

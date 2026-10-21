@@ -51,12 +51,45 @@ fn bench_transpile(c: &mut Criterion) {
     });
 }
 
+fn bench_ctas(c: &mut Criterion) {
+    let mut group = c.benchmark_group("CTAS");
+    let properties =
+        "CREATE TABLE output_table WITH (format = 'ORC') AS SELECT id FROM input_table";
+    for (name, sql) in [
+        (
+            "plain",
+            "CREATE TABLE output_table AS SELECT id FROM input_table",
+        ),
+        ("properties", properties),
+        (
+            "iceberg",
+            "CREATE TABLE x WITH (\
+                is_external = false, \
+                table_type = 'ICEBERG', \
+                location = 's3://example-bucket/output'\
+            ) AS SELECT user_id, NTILE(2) OVER (ORDER BY user_id) AS shard_id FROM t",
+        ),
+    ] {
+        group.bench_function(format!("parse {name}"), |b| {
+            b.iter(|| parse(black_box(sql), Dialect::Athena).unwrap())
+        });
+        group.bench_function(format!("roundtrip {name}"), |b| {
+            b.iter(|| {
+                let ast = parse(black_box(sql), Dialect::Athena).unwrap();
+                generate(&ast, Dialect::Athena)
+            })
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse_simple,
     bench_parse_complex,
     bench_parse_cte,
     bench_roundtrip,
-    bench_transpile
+    bench_transpile,
+    bench_ctas
 );
 criterion_main!(benches);

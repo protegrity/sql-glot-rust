@@ -285,6 +285,15 @@ impl AstDiffer {
     // ── CREATE TABLE ───────────────────────────────────────────────────
 
     fn diff_create_table(&mut self, source: &CreateTableStatement, target: &CreateTableStatement) {
+        if source.with_properties != target.with_properties || source.with_data != target.with_data
+        {
+            self.changes.push(ChangeAction::Update(
+                AstNode::Statement(Box::new(Statement::CreateTable(source.clone()))),
+                AstNode::Statement(Box::new(Statement::CreateTable(target.clone()))),
+            ));
+            return;
+        }
+
         if source.table != target.table {
             self.changes.push(ChangeAction::Update(
                 AstNode::Expr(table_ref_to_expr(&source.table)),

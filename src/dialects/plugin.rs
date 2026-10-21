@@ -598,6 +598,9 @@ fn transform_statement_plugin(statement: &mut Statement, target: &DialectRef) {
             }
         }
         Statement::CreateTable(ct) => {
+            for property in &mut ct.with_properties {
+                property.value = transform_expr_plugin(property.value.clone(), target);
+            }
             for col in &mut ct.columns {
                 col.data_type = target.map_data_type(&col.data_type);
                 if let Some(default) = &mut col.default {
