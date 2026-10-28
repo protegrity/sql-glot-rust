@@ -778,6 +778,10 @@ impl ConditionBuilder {
 
     /// Negate the current condition with NOT.
     #[must_use]
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "Retain the existing fluent builder API without requiring a trait import"
+    )]
     pub fn not(self) -> Self {
         let expr = self.expr.map(|e| Expr::UnaryOp {
             op: crate::ast::UnaryOperator::Not,

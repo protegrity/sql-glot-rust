@@ -216,6 +216,10 @@ impl Dialect {
     }
 
     /// Parse a dialect name (case-insensitive) into a `Dialect`.
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "Retain the public Option-returning parser API; FromStr requires Result"
+    )]
     pub fn from_str(s: &str) -> Option<Dialect> {
         match s.to_lowercase().as_str() {
             "" | "ansi" => Some(Dialect::Ansi),
@@ -755,6 +759,9 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
         }
         // DDL: map data types in CREATE TABLE column definitions
         Statement::CreateTable(ct) => {
+            for property in &mut ct.with_properties {
+                property.value = transform_expr(property.value.clone(), target);
+            }
             for col in &mut ct.columns {
                 col.data_type = map_data_type(col.data_type.clone(), target);
                 if let Some(default) = &mut col.default {
@@ -1548,13 +1555,12 @@ fn transform_expr(expr: Expr, target: Dialect) -> Expr {
             let right_transformed = transform_expr(*right, target);
 
             // Change 6: expr ± INTERVAL → DATEADD() for T-SQL
-            if is_tsql_family(target) && matches!(op, BinaryOperator::Plus | BinaryOperator::Minus)
-            {
-                if let Some(dateadd) =
+            if is_tsql_family(target)
+                && matches!(op, BinaryOperator::Plus | BinaryOperator::Minus)
+                && let Some(dateadd) =
                     try_transform_interval_arithmetic(&left_transformed, &op, &right_transformed)
-                {
-                    return dateadd;
-                }
+            {
+                return dateadd;
             }
 
             // Change 8 (CR-032): expr ± INTERVAL → expr ± NUMTODSINTERVAL() /
@@ -2005,10 +2011,10 @@ fn transform_limit(sel: &mut SelectStatement, target: Dialect) {
             }
         }
         // Also move fetch_first → top when no offset
-        if sel.offset.is_none() {
-            if let Some(fetch) = sel.fetch_first.take() {
-                sel.top = Some(Box::new(fetch));
-            }
+        if sel.offset.is_none()
+            && let Some(fetch) = sel.fetch_first.take()
+        {
+            sel.top = Some(Box::new(fetch));
         }
     } else if matches!(target, Dialect::Oracle) {
         // Oracle prefers FETCH FIRST n ROWS ONLY (SQL:2008 syntax)
@@ -2033,10 +2039,10 @@ fn transform_limit(sel: &mut SelectStatement, target: Dialect) {
                 sel.limit = Some(*top);
             }
         }
-        if let Some(fetch) = sel.fetch_first.take() {
-            if sel.limit.is_none() {
-                sel.limit = Some(fetch);
-            }
+        if let Some(fetch) = sel.fetch_first.take()
+            && sel.limit.is_none()
+        {
+            sel.limit = Some(fetch);
         }
     }
 }
@@ -2200,59 +2206,58 @@ fn try_transform_interval_arithmetic(
     right: &Expr,
 ) -> Option<Expr> {
     // Check right side is an interval
-    if let Expr::Interval { value, unit } = right {
-        if let Some((count, unit_name)) = parse_interval_value(value, unit) {
-            let final_count = if matches!(op, BinaryOperator::Minus) {
-                -count
-            } else {
-                count
-            };
-            return Some(Expr::Function {
-                name: "DATEADD".to_string(),
-                args: vec![
-                    // Use a Column expr for the datepart keyword (unquoted identifier)
-                    Expr::Column {
-                        table: None,
-                        name: unit_name,
-                        quote_style: QuoteStyle::None,
-                        table_quote_style: QuoteStyle::None,
-                    },
-                    Expr::Number(final_count.to_string()),
-                    left.clone(),
-                ],
-                distinct: false,
-                filter: None,
-                over: None,
-                order_by: vec![],
-                within_group: false,
-            });
-        }
+    if let Expr::Interval { value, unit } = right
+        && let Some((count, unit_name)) = parse_interval_value(value, unit)
+    {
+        let final_count = if matches!(op, BinaryOperator::Minus) {
+            -count
+        } else {
+            count
+        };
+        return Some(Expr::Function {
+            name: "DATEADD".to_string(),
+            args: vec![
+                // Use a Column expr for the datepart keyword (unquoted identifier)
+                Expr::Column {
+                    table: None,
+                    name: unit_name,
+                    quote_style: QuoteStyle::None,
+                    table_quote_style: QuoteStyle::None,
+                },
+                Expr::Number(final_count.to_string()),
+                left.clone(),
+            ],
+            distinct: false,
+            filter: None,
+            over: None,
+            order_by: vec![],
+            within_group: false,
+        });
     }
 
     // Check left side is an interval (less common: INTERVAL '7 days' + col)
-    if let Expr::Interval { value, unit } = left {
-        if matches!(op, BinaryOperator::Plus) {
-            if let Some((count, unit_name)) = parse_interval_value(value, unit) {
-                return Some(Expr::Function {
-                    name: "DATEADD".to_string(),
-                    args: vec![
-                        Expr::Column {
-                            table: None,
-                            name: unit_name,
-                            quote_style: QuoteStyle::None,
-                            table_quote_style: QuoteStyle::None,
-                        },
-                        Expr::Number(count.to_string()),
-                        right.clone(),
-                    ],
-                    distinct: false,
-                    filter: None,
-                    over: None,
-                    order_by: vec![],
-                    within_group: false,
-                });
-            }
-        }
+    if let Expr::Interval { value, unit } = left
+        && matches!(op, BinaryOperator::Plus)
+        && let Some((count, unit_name)) = parse_interval_value(value, unit)
+    {
+        return Some(Expr::Function {
+            name: "DATEADD".to_string(),
+            args: vec![
+                Expr::Column {
+                    table: None,
+                    name: unit_name,
+                    quote_style: QuoteStyle::None,
+                    table_quote_style: QuoteStyle::None,
+                },
+                Expr::Number(count.to_string()),
+                right.clone(),
+            ],
+            distinct: false,
+            filter: None,
+            over: None,
+            order_by: vec![],
+            within_group: false,
+        });
     }
 
     None
@@ -2328,7 +2333,7 @@ fn oracle_interval_call(count: i64, unit_name: &str) -> Option<Expr> {
 fn parse_interval_value(value: &Expr, unit: &Option<DateTimeField>) -> Option<(i64, String)> {
     // Case 1: INTERVAL '7 days' (value is a string literal containing "7 days")
     if let Expr::StringLiteral(s) = value {
-        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        let parts: Vec<&str> = s.split_whitespace().collect();
         if parts.len() == 2 {
             let count: i64 = parts[0].parse().ok()?;
             let unit_name = normalize_interval_unit(parts[1])?;
@@ -2399,7 +2404,7 @@ fn datetime_field_to_tsql(field: &DateTimeField) -> Option<String> {
 /// Strips regex features (|, (), +, *) that T-SQL LIKE doesn't support.
 fn simplify_similar_to_pattern(pattern: &Expr) -> Expr {
     if let Expr::StringLiteral(s) = pattern {
-        let simplified = s.replace('|', "%").replace('(', "").replace(')', "");
+        let simplified = s.replace('|', "%").replace(['(', ')'], "");
         Expr::StringLiteral(simplified)
     } else {
         pattern.clone()

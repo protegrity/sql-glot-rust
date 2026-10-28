@@ -308,12 +308,11 @@ impl<'a> Iterator for LineageIterator<'a> {
     type Item = &'a LineageNode;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.stack.pop().map(|node| {
+        self.stack.pop().inspect(|node| {
             // Push children in reverse order for pre-order traversal
             for child in node.downstream.iter().rev() {
                 self.stack.push(child);
             }
-            node
         })
     }
 }
@@ -636,23 +635,22 @@ fn build_lineage_for_select_column(
                         }
                     } else if source_info.kind == SourceKind::Table {
                         // Check schema for table columns
-                        if let Ok(schema_cols) = ctx.schema.column_names(&[&source_name]) {
-                            if schema_cols
+                        if let Ok(schema_cols) = ctx.schema.column_names(&[&source_name])
+                            && schema_cols
                                 .iter()
                                 .any(|c| matches_column_name(c, &col_name))
-                            {
-                                // Found in schema
-                                let mut node = LineageNode::new(col_name.clone())
-                                    .with_source(source_name.clone())
-                                    .with_depth(ctx.depth);
-                                node.expression = Some(Expr::Column {
-                                    table: Some(source_name.clone()),
-                                    name: col_name.clone(),
-                                    quote_style: QuoteStyle::None,
-                                    table_quote_style: QuoteStyle::None,
-                                });
-                                return Ok(node);
-                            }
+                        {
+                            // Found in schema
+                            let mut node = LineageNode::new(col_name.clone())
+                                .with_source(source_name.clone())
+                                .with_depth(ctx.depth);
+                            node.expression = Some(Expr::Column {
+                                table: Some(source_name.clone()),
+                                name: col_name.clone(),
+                                quote_style: QuoteStyle::None,
+                                table_quote_style: QuoteStyle::None,
+                            });
+                            return Ok(node);
                         }
                     }
                 }
@@ -663,17 +661,17 @@ fn build_lineage_for_select_column(
                     .is_some_and(|t| matches_column_name(t, table))
                 {
                     // Check if column exists in this table
-                    if let Some(source_info) = ctx.sources.get(table).cloned() {
-                        if let Some(cols) = &source_info.columns {
-                            for col_item in cols {
-                                if let SelectItem::Expr { expr, alias, .. } = col_item {
-                                    let item_name = alias
-                                        .as_ref()
-                                        .map(String::as_str)
-                                        .unwrap_or_else(|| expr_output_name(expr));
-                                    if matches_column_name(item_name, &col_name) {
-                                        return build_lineage_for_expr(expr, alias.clone(), ctx);
-                                    }
+                    if let Some(source_info) = ctx.sources.get(table).cloned()
+                        && let Some(cols) = &source_info.columns
+                    {
+                        for col_item in cols {
+                            if let SelectItem::Expr { expr, alias, .. } = col_item {
+                                let item_name = alias
+                                    .as_ref()
+                                    .map(String::as_str)
+                                    .unwrap_or_else(|| expr_output_name(expr));
+                                if matches_column_name(item_name, &col_name) {
+                                    return build_lineage_for_expr(expr, alias.clone(), ctx);
                                 }
                             }
                         }
@@ -762,13 +760,13 @@ fn resolve_column_lineage(
                 }
                 SourceKind::Cte | SourceKind::DerivedTable => {
                     // Recurse into CTE/derived table (if not already visiting)
-                    if !ctx.visiting.contains(&normalized_table) {
-                        if let Some(stmt) = source_info.statement {
-                            ctx.visiting.insert(normalized_table.clone());
-                            let result = build_lineage_for_column(&col.name, &stmt, ctx);
-                            ctx.visiting.remove(&normalized_table);
-                            return result;
-                        }
+                    if !ctx.visiting.contains(&normalized_table)
+                        && let Some(stmt) = source_info.statement
+                    {
+                        ctx.visiting.insert(normalized_table.clone());
+                        let result = build_lineage_for_column(&col.name, &stmt, ctx);
+                        ctx.visiting.remove(&normalized_table);
+                        return result;
                     }
                     // If already visiting, treat as leaf
                     let node = LineageNode::new(name)
@@ -804,15 +802,14 @@ fn resolve_column_lineage(
                     continue;
                 }
                 // Check if CTE/derived table outputs this column
-                if let Some(ref columns) = source_info.columns {
-                    if columns.iter().any(|c| select_item_has_column(c, &col.name)) {
-                        if let Some(stmt) = source_info.statement {
-                            ctx.visiting.insert(source_name.clone());
-                            let result = build_lineage_for_column(&col.name, &stmt, ctx);
-                            ctx.visiting.remove(&source_name);
-                            return result;
-                        }
-                    }
+                if let Some(ref columns) = source_info.columns
+                    && columns.iter().any(|c| select_item_has_column(c, &col.name))
+                    && let Some(stmt) = source_info.statement
+                {
+                    ctx.visiting.insert(source_name.clone());
+                    let result = build_lineage_for_column(&col.name, &stmt, ctx);
+                    ctx.visiting.remove(&source_name);
+                    return result;
                 }
             }
             SourceKind::External => {}
@@ -831,16 +828,11 @@ fn register_table_source(source: &TableSource, ctx: &mut LineageContext) {
             let key = table_ref.alias.as_ref().unwrap_or(&table_ref.name).clone();
             let normalized = normalize_name(&key, ctx.config.dialect);
             // Don't overwrite CTEs or derived tables
-            if !ctx.sources.contains_key(&normalized) {
-                ctx.sources.insert(
-                    normalized,
-                    SourceInfo {
-                        kind: SourceKind::Table,
-                        columns: None,
-                        statement: None,
-                    },
-                );
-            }
+            ctx.sources.entry(normalized).or_insert(SourceInfo {
+                kind: SourceKind::Table,
+                columns: None,
+                statement: None,
+            });
         }
         TableSource::Subquery { query, alias, .. } => {
             if let Some(alias) = alias {

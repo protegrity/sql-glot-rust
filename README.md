@@ -145,7 +145,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlglot-rust = "0.10.33"
+sqlglot-rust = "0.11.0"
 ```
 
 ### Parse and generate SQL
@@ -418,6 +418,8 @@ LD_LIBRARY_PATH=target/release ./example
 ```
 
 ## Documentation
+
+- **[CREATE TABLE AS](docs/ctas-with-properties.md)** — Table properties, population clauses, preservation limits, and the 0.11 migration
 
 - **[Installation](docs/installation.md)** — Dependency setup and verification
 - **[Developer Guide](docs/developer-guide.md)** — Parsing, generating, transpiling, AST traversal, optimization, and serialization with full code examples

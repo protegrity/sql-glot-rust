@@ -305,7 +305,7 @@ impl Tokenizer {
                 // to a plain `LBrace` otherwise.
                 if self.peek().is_some_and(is_identifier_start) {
                     let mut i = 1usize;
-                    while self.peek_at(i).is_some_and(|c| is_identifier_continue(c)) {
+                    while self.peek_at(i).is_some_and(is_identifier_continue) {
                         i += 1;
                     }
                     if self.peek_at(i) == Some(':') {
@@ -498,7 +498,13 @@ impl Tokenizer {
                     } else {
                         "!~"
                     };
-                    Ok(self.make_token(TokenType::BitwiseNot, operator, start, start_line, start_col))
+                    Ok(self.make_token(
+                        TokenType::BitwiseNot,
+                        operator,
+                        start,
+                        start_line,
+                        start_col,
+                    ))
                 } else {
                     Err(SqlglotError::TokenizerError {
                         message: format!("Unexpected character: {ch}"),

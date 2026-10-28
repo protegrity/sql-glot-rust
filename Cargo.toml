@@ -1,6 +1,6 @@
 [package]
 name = "sqlglot-rust"
-version = "0.10.33"
+version = "0.11.0"
 edition = "2024"
 description = "A SQL parser, optimizer, and transpiler library inspired by Python's sqlglot"
 license = "MIT"
@@ -29,6 +29,10 @@ clap = { version = "4", features = ["derive"], optional = true }
 [[bin]]
 name = "sqlglot"
 path = "src/bin/sqlglot.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "test_cli"
 required-features = ["cli"]
 
 [dev-dependencies]

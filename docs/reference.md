@@ -498,14 +498,29 @@ let snowflake_sql = transpile(
 
 ```rust
 pub struct CreateTableStatement {
+    pub comments: Vec<String>,
     pub if_not_exists: bool,
     pub temporary: bool,
     pub table: TableRef,
     pub columns: Vec<ColumnDef>,
     pub constraints: Vec<TableConstraint>,
+    pub with_properties: Vec<TableProperty>,
     pub as_select: Option<Box<Statement>>,
+    pub with_data: Option<bool>,
+}
+
+pub struct TableProperty {
+    pub name: String,
+    pub quote_style: QuoteStyle,
+    pub value: Expr,
 }
 ```
+
+`with_properties` retains CTAS properties in source order. `with_data` is
+`Some(true)` for explicit `WITH DATA`, `Some(false)` for `WITH NO DATA`, and
+`None` when omitted. Both fields are ignored by generation without `as_select`.
+See [CTAS support and migration](ctas-with-properties.md) for syntax boundaries,
+serialization compatibility, and the 0.11 Rust source migration.
 
 **Example:**
 

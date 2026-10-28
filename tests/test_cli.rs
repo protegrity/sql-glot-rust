@@ -111,7 +111,7 @@ fn parse_valid_json() {
         .unwrap();
 
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&stdout.trim()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert!(parsed.is_array());
 }
 

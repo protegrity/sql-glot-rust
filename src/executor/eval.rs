@@ -142,20 +142,20 @@ fn eval_expr_impl(
             distinct,
             ..
         } => {
-            if is_aggregate_name(name) {
-                if let Some(g) = group {
-                    return eval_aggregate_fn(name, args, *distinct, g, tables, ctes);
-                }
+            if is_aggregate_name(name)
+                && let Some(g) = group
+            {
+                return eval_aggregate_fn(name, args, *distinct, g, tables, ctes);
             }
             eval_scalar_fn(name, args, row, group, tables, ctes)
         }
 
         // ── Typed functions ──────────────────────────────────────────
         Expr::TypedFunction { func, .. } => {
-            if is_typed_aggregate(func) {
-                if let Some(g) = group {
-                    return eval_typed_aggregate(func, g, tables, ctes);
-                }
+            if is_typed_aggregate(func)
+                && let Some(g) = group
+            {
+                return eval_typed_aggregate(func, g, tables, ctes);
             }
             eval_typed_fn(func, row, group, tables, ctes)
         }
@@ -1118,11 +1118,11 @@ fn eval_typed_fn(
             }
         }
         TypedFunction::Greatest { exprs } => {
-            let vals: Vec<Value> = exprs.iter().map(|e| ev(e)).collect::<Result<_>>()?;
+            let vals: Vec<Value> = exprs.iter().map(&ev).collect::<Result<_>>()?;
             Ok(find_extreme(&vals, true))
         }
         TypedFunction::Least { exprs } => {
-            let vals: Vec<Value> = exprs.iter().map(|e| ev(e)).collect::<Result<_>>()?;
+            let vals: Vec<Value> = exprs.iter().map(&ev).collect::<Result<_>>()?;
             Ok(find_extreme(&vals, false))
         }
         TypedFunction::ConcatWs { separator, exprs } => {

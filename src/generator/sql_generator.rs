@@ -179,13 +179,13 @@ impl Generator {
     /// Normalize a comment for the target dialect.
     /// Converts MySQL `#` comments to `--` when targeting non-MySQL dialects.
     fn normalize_comment(&self, comment: &str) -> String {
-        if comment.starts_with('#') {
+        if let Some(body) = comment.strip_prefix('#') {
             let is_mysql_target = matches!(
                 self.dialect,
                 Some(Dialect::Mysql | Dialect::Doris | Dialect::SingleStore | Dialect::StarRocks)
             );
             if !is_mysql_target {
-                return format!("--{}", &comment[1..]);
+                return format!("--{body}");
             }
         }
         comment.to_string()
@@ -1307,9 +1307,54 @@ impl Generator {
         self.gen_table_ref(&ct.table);
 
         if let Some(as_select) = &ct.as_select {
+            if !ct.with_properties.is_empty() {
+                self.write_keyword(" WITH (");
+                for (index, property) in ct.with_properties.iter().enumerate() {
+                    if index > 0 {
+                        self.write(", ");
+                    }
+                    self.write_quoted(&property.name, property.quote_style);
+                    self.write(" = ");
+                    self.gen_expr(&property.value);
+                }
+                self.write(")");
+            }
             self.write(" ");
             self.write_keyword("AS ");
-            self.gen_statement(as_select);
+            // ANSI and Teradata population clauses follow a parenthesized query
+            let parenthesized = ct.with_data.is_some()
+                && matches!(self.dialect, None | Some(Dialect::Ansi | Dialect::Teradata));
+            // Keep comments before '(' so the parser can recognize the query
+            match as_select.as_ref() {
+                Statement::Select(query) if parenthesized => {
+                    self.gen_comments(&query.comments);
+                    self.write("(");
+                    self.gen_select(query);
+                    self.write(")");
+                }
+                Statement::SetOperation(query) if parenthesized => {
+                    self.gen_comments(&query.comments);
+                    self.write("(");
+                    self.gen_set_operation(query);
+                    self.write(")");
+                }
+                _ => {
+                    if parenthesized {
+                        self.write("(");
+                    }
+                    self.gen_statement(as_select);
+                    if parenthesized {
+                        self.write(")");
+                    }
+                }
+            }
+            if let Some(with_data) = ct.with_data {
+                self.write_keyword(if with_data {
+                    " WITH DATA"
+                } else {
+                    " WITH NO DATA"
+                });
+            }
             return;
         }
 
@@ -3932,6 +3977,12 @@ mod tests {
             roundtrip("CREATE TABLE users (id INT NOT NULL, name VARCHAR(255), email TEXT)"),
             "CREATE TABLE users (id INT NOT NULL, name VARCHAR(255), email TEXT)"
         );
+    }
+
+    #[test]
+    fn test_ctas_properties_roundtrip() {
+        let sql = "CREATE TABLE t WITH (\"format\" = 'ORC', bucketed_by = ARRAY['id'], bucket_count = 8) AS SELECT id FROM source";
+        assert_eq!(roundtrip(sql), sql);
     }
 
     #[test]

@@ -272,11 +272,11 @@ fn test_optimizer_constant_folding() {
 #[test]
 fn test_find_columns() {
     let ast = parse("SELECT a, b, c FROM t WHERE a > 1", Dialect::Ansi).unwrap();
-    if let sqlglot_rust::Statement::Select(sel) = &ast {
-        if let Some(wh) = &sel.where_clause {
-            let cols = sqlglot_rust::ast::find_columns(wh);
-            assert_eq!(cols.len(), 1);
-        }
+    if let sqlglot_rust::Statement::Select(sel) = &ast
+        && let Some(wh) = &sel.where_clause
+    {
+        let cols = sqlglot_rust::ast::find_columns(wh);
+        assert_eq!(cols.len(), 1);
     }
 }
 

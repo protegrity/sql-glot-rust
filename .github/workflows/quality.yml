@@ -1,0 +1,32 @@
+name: Rust quality
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install validation toolchain
+        uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint all targets and features
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Test all features and documentation
+        run: cargo test --locked --all-features
+      - name: Build API documentation without warnings
+        run: RUSTDOCFLAGS='-D warnings' cargo doc --locked --all-features --no-deps
+      - name: Test default features
+        run: cargo test --locked --no-default-features
+      - name: Check benchmark cases
+        run: cargo bench --locked --bench parser_bench -- CTAS --test

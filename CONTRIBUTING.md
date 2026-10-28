@@ -40,10 +40,15 @@ cargo test
 Before submitting a pull request, ensure your code passes all checks:
 
 ```bash
-cargo fmt        # Format code
-cargo clippy     # Run linter
-cargo test       # Run all tests
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+cargo test --locked --no-default-features
 ```
+
+The Rust quality workflow uses Rust 1.89.0 for reproducible formatting and lint
+checks; the platform build workflow also checks the current stable toolchain.
+Run `cargo fmt --all` to apply formatting before the checks.
 
 ## Running Benchmarks
 

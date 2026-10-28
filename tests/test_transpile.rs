@@ -5338,4 +5338,3 @@ fn psq4850_tsql_top_percent_and_try_cast_preserved() {
         Dialect::Tsql,
     );
 }
-

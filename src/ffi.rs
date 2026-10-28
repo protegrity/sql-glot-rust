@@ -47,10 +47,14 @@ fn to_c_string(s: String) -> *mut c_char {
 ///
 /// * `sql`     – null-terminated SQL string (required).
 /// * `dialect` – null-terminated dialect name, e.g. `"postgres"`. Pass `NULL`
-///               for ANSI SQL.
+///   for ANSI SQL.
 ///
 /// Returns a heap-allocated JSON string on success, or `NULL` on failure.
 /// The caller **must** free a non-null return value with [`sqlglot_free`].
+///
+/// # Safety
+/// Every non-null argument must point to a readable, NUL-terminated string
+/// that remains valid for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sqlglot_parse(sql: *const c_char, dialect: *const c_char) -> *mut c_char {
     let sql_str = match unsafe { cstr_to_option(sql) } {
@@ -76,6 +80,10 @@ pub unsafe extern "C" fn sqlglot_parse(sql: *const c_char, dialect: *const c_cha
 ///
 /// Returns a heap-allocated SQL string on success, or `NULL` on failure.
 /// The caller **must** free a non-null return value with [`sqlglot_free`].
+///
+/// # Safety
+/// Every non-null argument must point to a readable, NUL-terminated string
+/// that remains valid for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sqlglot_transpile(
     sql: *const c_char,
@@ -102,6 +110,10 @@ pub unsafe extern "C" fn sqlglot_transpile(
 ///
 /// Returns a heap-allocated SQL string on success, or `NULL` on failure.
 /// The caller **must** free a non-null return value with [`sqlglot_free`].
+///
+/// # Safety
+/// Every non-null argument must point to a readable, NUL-terminated string
+/// that remains valid for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sqlglot_generate(
     ast_json: *const c_char,
@@ -129,6 +141,10 @@ pub unsafe extern "C" fn sqlglot_generate(
 ///
 /// Returns a heap-allocated SQL string on success, or `NULL` on failure.
 /// The caller **must** free a non-null return value with [`sqlglot_free`].
+///
+/// # Safety
+/// Every non-null argument must point to a readable, NUL-terminated string
+/// that remains valid for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sqlglot_generate_pretty(
     ast_json: *const c_char,
@@ -161,6 +177,11 @@ pub extern "C" fn sqlglot_version() -> *const c_char {
 /// Free a string previously returned by any `sqlglot_*` function.
 ///
 /// Passing `NULL` is safe and results in a no-op.
+///
+/// # Safety
+/// A non-null pointer must be an allocation returned by this library's string
+/// APIs, must not have been freed already, and must not be the static pointer
+/// returned by `sqlglot_version`. No references may be used after this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sqlglot_free(ptr: *mut c_char) {
     if !ptr.is_null() {

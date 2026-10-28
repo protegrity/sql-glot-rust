@@ -321,10 +321,10 @@ impl RowContext {
         // Strip table qualifier.
         for (i, col) in self.columns.iter().enumerate() {
             let col_lower = col.to_lowercase();
-            if let Some((_, suffix)) = col_lower.rsplit_once('.') {
-                if suffix == name_lower {
-                    return Some(&self.values[i]);
-                }
+            if let Some((_, suffix)) = col_lower.rsplit_once('.')
+                && suffix == name_lower
+            {
+                return Some(&self.values[i]);
             }
         }
         None

@@ -24,6 +24,9 @@ pub struct Parser {
     preserve_comments: bool,
     /// Accumulated comments pending attachment to the next AST node.
     pending_comments: Vec<String>,
+    /// Count syntax accepted without an equivalent AST representation. CTAS
+    /// snapshots this counter to detect known unsupported clauses in nested queries.
+    unmodeled_syntax: usize,
 }
 
 impl Parser {
@@ -36,6 +39,7 @@ impl Parser {
             pos: 0,
             preserve_comments: false,
             pending_comments: Vec::new(),
+            unmodeled_syntax: 0,
         })
     }
 
@@ -48,6 +52,7 @@ impl Parser {
             pos: 0,
             preserve_comments: true,
             pending_comments: Vec::new(),
+            unmodeled_syntax: 0,
         })
     }
 
@@ -62,6 +67,7 @@ impl Parser {
             pos: 0,
             preserve_comments: false,
             pending_comments: Vec::new(),
+            unmodeled_syntax: 0,
         })
     }
 
@@ -79,6 +85,7 @@ impl Parser {
             pos: 0,
             preserve_comments: true,
             pending_comments: Vec::new(),
+            unmodeled_syntax: 0,
         })
     }
 
@@ -815,13 +822,12 @@ impl Parser {
                 .map(|t| matches!(t.token_type, TokenType::LParen))
                 .unwrap_or(false)
             && matches!(stmt, Statement::Select(_) | Statement::SetOperation(_))
+            && let Some(opts) = self.capture_query_option_text()
         {
-            if let Some(opts) = self.capture_query_option_text() {
-                match &mut stmt {
-                    Statement::Select(sel) => sel.query_options = Some(opts),
-                    Statement::SetOperation(sop) => sop.query_options = Some(opts),
-                    _ => {}
-                }
+            match &mut stmt {
+                Statement::Select(sel) => sel.query_options = Some(opts),
+                Statement::SetOperation(sop) => sop.query_options = Some(opts),
+                _ => {}
             }
         }
         // ClickHouse trailing `WITH TOTALS` / `WITH TIES` / `WITH ROLLUP` /
@@ -1202,6 +1208,7 @@ impl Parser {
         // and its parenthesized binding list opaquely so the surrounding
         // SELECT / INSERT / UPDATE / DELETE / MERGE parses cleanly.
         if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("XMLNAMESPACES") {
+            self.unmodeled_syntax += 1;
             self.advance(); // XMLNAMESPACES
             if self.match_token(TokenType::LParen) {
                 let mut depth = 1_i32;
@@ -1223,25 +1230,27 @@ impl Parser {
         // (select …)`. We swallow these bindings — they aren't modeled as
         // CTEs — then fall through to the main query.
         if self.is_clickhouse_scalar_with() {
+            self.unmodeled_syntax += 1;
             loop {
                 let _ = self.parse_expr()?;
                 self.expect(TokenType::As)?;
                 // The binding name may use a data-type keyword (`Uuid`,
                 // `Text`, etc.) — accept any single token that isn't a
                 // structural delimiter so the loop advances.
-                if self.is_name_token() || self.is_data_type_token() {
-                    self.advance();
-                } else if !matches!(
-                    self.peek_type(),
-                    TokenType::Comma
-                        | TokenType::Eof
-                        | TokenType::Semicolon
-                        | TokenType::Select
-                        | TokenType::Insert
-                        | TokenType::Update
-                        | TokenType::Delete
-                        | TokenType::Merge
-                ) {
+                if self.is_name_token()
+                    || self.is_data_type_token()
+                    || !matches!(
+                        self.peek_type(),
+                        TokenType::Comma
+                            | TokenType::Eof
+                            | TokenType::Semicolon
+                            | TokenType::Select
+                            | TokenType::Insert
+                            | TokenType::Update
+                            | TokenType::Delete
+                            | TokenType::Merge
+                    )
+                {
                     self.advance();
                 }
                 if !self.match_token(TokenType::Comma) {
@@ -1323,7 +1332,7 @@ impl Parser {
             TokenType::LParen => true,
             TokenType::LBracket => true,
             TokenType::Number | TokenType::String | TokenType::HexString => true,
-            t if matches!(t, TokenType::Minus | TokenType::Plus) => true,
+            TokenType::Minus | TokenType::Plus => true,
             _ => {
                 // Plain identifier followed by anything other than `(` or `AS`
                 // also indicates the scalar form (e.g. `WITH x + 1 AS y`).
@@ -1619,6 +1628,8 @@ impl Parser {
                 ) {
                     if v == "DISTINCTROW" {
                         distinctrow = true;
+                    } else {
+                        self.unmodeled_syntax += 1;
                     }
                     self.advance();
                     continue;
@@ -1631,6 +1642,7 @@ impl Parser {
         // list so the surrounding query parses. We don't model DISTINCT ON in
         // the AST; treat it as plain DISTINCT.
         if distinct && self.match_token(TokenType::On) {
+            self.unmodeled_syntax += 1;
             self.expect(TokenType::LParen)?;
             let mut depth = 1;
             while depth > 0 {
@@ -1663,6 +1675,7 @@ impl Parser {
                 .map(|t| t.value.to_uppercase())
                 .unwrap_or_default();
             if matches!(v.as_str(), "STRUCT" | "VALUE") {
+                self.unmodeled_syntax += 1;
                 self.advance(); // AS
                 self.advance(); // STRUCT|VALUE
             }
@@ -1757,6 +1770,7 @@ impl Parser {
         // Sits between WHERE and GROUP BY. Swallow opaquely up to a known
         // terminator so the surrounding query parses.
         if self.check_keyword("PREFERRING") {
+            self.unmodeled_syntax += 1;
             self.advance();
             loop {
                 match self.peek_type() {
@@ -1780,16 +1794,23 @@ impl Parser {
         let group_by = if self.match_token(TokenType::Group) {
             self.expect(TokenType::By)?;
             let items = self.parse_group_by_list()?;
-            // ClickHouse / MySQL `GROUP BY ... WITH ROLLUP|CUBE|TOTALS` —
-            // swallow the modifier; we don't model it in the AST.
-            if self.match_token(TokenType::With) {
-                let _ = self.match_token(TokenType::Rollup)
-                    || self.match_token(TokenType::Cube)
-                    || self.match_keyword("TOTALS");
+            // Consume only the known GROUP BY modifiers here so CTAS can read
+            // WITH [NO] DATA
+            if self.peek_type() == &TokenType::With
+                && self.peek_offset(1).is_some_and(|token| {
+                    matches!(token.token_type, TokenType::Rollup | TokenType::Cube)
+                        || (token.token_type == TokenType::Identifier
+                            && token.value.eq_ignore_ascii_case("TOTALS"))
+                })
+            {
+                self.unmodeled_syntax += 1;
+                self.advance();
+                self.advance();
             }
             // Hive / Spark `GROUP BY k1, k2 GROUPING SETS ((k1), (k2))` —
             // swallow the trailing parenthesized list.
             if self.match_token(TokenType::Grouping) {
+                self.unmodeled_syntax += 1;
                 if self.check_keyword("SETS") {
                     self.advance();
                 }
@@ -1863,6 +1884,7 @@ impl Parser {
             let saved = self.pos;
             self.advance();
             if self.peek_type() == &TokenType::By {
+                self.unmodeled_syntax += 1;
                 self.advance();
                 let _ = self.parse_order_by_items()?;
             } else {
@@ -1889,6 +1911,7 @@ impl Parser {
         // consume the BY-list and an optional outer LIMIT so the trailing
         // SETTINGS / FORMAT clauses still parse.
         if limit.is_some() && self.match_token(TokenType::By) {
+            self.unmodeled_syntax += 1;
             let _ = self.parse_expr_list_allow_item_alias()?;
             if self.match_token(TokenType::Limit) {
                 let _ = self.parse_expr()?;
@@ -1949,6 +1972,7 @@ impl Parser {
                 })
                 .unwrap_or(false);
             if is_postfix_modifier {
+                self.unmodeled_syntax += 1;
                 self.advance(); // WITH
                 self.advance(); // modifier keyword
             }
@@ -1958,15 +1982,12 @@ impl Parser {
         // `INTO OUTFILE 'file'` style trailing clauses. None of these have
         // a dedicated AST representation; consume to keep the surrounding
         // statement parseable.
-        loop {
-            if self.check_keyword("SETTINGS")
-                || self.check_keyword("FORMAT")
-                || self.check_keyword("INTO")
-            {
-                self.skip_trailing_options();
-                break;
-            }
-            break;
+        if self.check_keyword("SETTINGS")
+            || self.check_keyword("FORMAT")
+            || self.check_keyword("INTO")
+        {
+            self.unmodeled_syntax += 1;
+            self.skip_trailing_options();
         }
 
         Ok(SelectStatement {
@@ -2042,6 +2063,7 @@ impl Parser {
         // DuckDB `UNION ALL BY NAME` / `UNION BY NAME` — column-name-based
         // set operation. Swallow the modifier so the inner SELECT parses.
         if self.match_token(TokenType::By) {
+            self.unmodeled_syntax += 1;
             if self.is_name_token() && self.peek().value.eq_ignore_ascii_case("NAME") {
                 self.advance();
             }
@@ -2167,6 +2189,7 @@ impl Parser {
             if !matched && !pattern_modifier {
                 break;
             }
+            self.unmodeled_syntax += 1;
             if pattern_modifier {
                 // Operator keyword (and optional TO for SIMILAR TO) +
                 // pattern string. We're tolerant of extra ESCAPE clause.
@@ -2176,10 +2199,10 @@ impl Parser {
                 }
                 if matches!(self.peek_type(), TokenType::String) {
                     self.advance();
-                    if self.match_token(TokenType::Escape) {
-                        if matches!(self.peek_type(), TokenType::String) {
-                            self.advance();
-                        }
+                    if self.match_token(TokenType::Escape)
+                        && matches!(self.peek_type(), TokenType::String)
+                    {
+                        self.advance();
                     }
                 }
                 continue;
@@ -2462,6 +2485,7 @@ impl Parser {
         // RESERVOIR) and the parenthesized body so the surrounding query
         // parses. Also accept an optional `REPEATABLE (n)` trailer.
         if self.match_token(TokenType::Tablesample) {
+            self.unmodeled_syntax += 1;
             // Optional sampling method identifier.
             if matches!(self.peek_type(), TokenType::Identifier) {
                 self.advance();
@@ -2508,13 +2532,12 @@ impl Parser {
             // Optional trailing alias on the sampled table — `… TABLESAMPLE
             // (…) s`. We attach it to the underlying table reference when
             // possible, otherwise just consume the identifier.
-            if let TableSource::Table(ref mut tr) = source {
-                if tr.alias.is_none() {
-                    if let Some((name, qs)) = self.parse_optional_alias()? {
-                        tr.alias = Some(name);
-                        tr.alias_quote_style = qs;
-                    }
-                }
+            if let TableSource::Table(ref mut tr) = source
+                && tr.alias.is_none()
+                && let Some((name, qs)) = self.parse_optional_alias()?
+            {
+                tr.alias = Some(name);
+                tr.alias_quote_style = qs;
             }
         }
         // Check for trailing PIVOT / UNPIVOT
@@ -2523,6 +2546,7 @@ impl Parser {
         // optional `OFFSET m` modifier. The keyword tokenizes as a plain
         // identifier so this also handles dialects that don't reserve it.
         if self.check_keyword("SAMPLE") {
+            self.unmodeled_syntax += 1;
             self.advance();
             // Accept a number, identifier, or parenthesized expression.
             if matches!(self.peek_type(), TokenType::Number) {
@@ -2557,6 +2581,7 @@ impl Parser {
         // Spark / DuckDB / Postgres `FROM VALUES (...) [, (...)]+ [alias[(cols)]]`
         // (un-parenthesised VALUES list). Swallow the rows.
         if self.match_token(TokenType::Values) {
+            self.unmodeled_syntax += 1;
             // First row.
             if self.match_token(TokenType::LParen) {
                 let mut depth = 1;
@@ -2790,6 +2815,7 @@ impl Parser {
             // AST as a table source; swallow the parenthesized body and
             // synthesise an empty subquery placeholder.
             if self.peek_type() == &TokenType::Values {
+                self.unmodeled_syntax += 1;
                 // Re-advance past the values list, balancing parens (we are
                 // inside the outer LParen at depth 1).
                 let mut depth = 1;
@@ -2855,6 +2881,7 @@ impl Parser {
             // throw away — acceptance only).
             if self.peek_type() == &TokenType::LParen {
                 let inner_saved = self.pos;
+                self.unmodeled_syntax += 1;
                 self.advance();
                 let after_lparen = self.pos;
                 if let Ok(inner) = self.parse_table_source() {
@@ -2874,12 +2901,12 @@ impl Parser {
                             Some((name, qs)) => (Some(name), qs),
                             None => (None, QuoteStyle::None),
                         };
-                        if let Some(name) = alias.clone() {
-                            if let TableSource::Table(mut tr) = inner {
-                                tr.alias = Some(name);
-                                tr.alias_quote_style = alias_quote_style;
-                                return Ok(TableSource::Table(tr));
-                            }
+                        if let Some(name) = alias.clone()
+                            && let TableSource::Table(mut tr) = inner
+                        {
+                            tr.alias = Some(name);
+                            tr.alias_quote_style = alias_quote_style;
+                            return Ok(TableSource::Table(tr));
                         }
                         return Ok(inner);
                     }
@@ -3097,14 +3124,14 @@ impl Parser {
             }
             self.advance();
             // Optional `FOR JOIN | FOR ORDER BY | FOR GROUP BY`.
-            if self.match_keyword("FOR") {
-                if matches!(
+            if self.match_keyword("FOR")
+                && matches!(
                     self.peek_type(),
                     TokenType::Join | TokenType::Order | TokenType::Group
-                ) {
-                    self.advance();
-                    let _ = self.match_token(TokenType::By);
-                }
+                )
+            {
+                self.advance();
+                let _ = self.match_token(TokenType::By);
             }
             if self.match_token(TokenType::LParen) {
                 let mut depth = 1;
@@ -3129,6 +3156,7 @@ impl Parser {
         // ClickHouse `FROM tbl [AS alias] FINAL` — swallow the FINAL modifier.
         // The token tokenizes as Identifier so check_keyword is enough.
         if self.check_keyword("FINAL") {
+            self.unmodeled_syntax += 1;
             self.advance();
         }
 
@@ -3727,29 +3755,28 @@ impl Parser {
                 self.advance();
                 true
             };
-            let consumed_strictness = if self.match_token(TokenType::All) {
-                true
-            } else if self.match_token(TokenType::Any) {
-                true
-            } else if self.check_keyword("SEMI")
-                || self.check_keyword("ANTI")
-                || self.check_keyword("ASOF")
-                || self.check_keyword("PASTE")
-            {
-                self.advance();
-                // DuckDB / ClickHouse allow compound forms like
-                // `ASOF ANTI JOIN` / `ASOF SEMI JOIN` — absorb a
-                // following second strictness keyword too.
-                if self.check_keyword("SEMI")
+            let consumed_strictness =
+                if self.match_token(TokenType::All) || self.match_token(TokenType::Any) {
+                    true
+                } else if self.check_keyword("SEMI")
                     || self.check_keyword("ANTI")
                     || self.check_keyword("ASOF")
+                    || self.check_keyword("PASTE")
                 {
                     self.advance();
-                }
-                true
-            } else {
-                _global_prefix
-            };
+                    // DuckDB / ClickHouse allow compound forms like
+                    // `ASOF ANTI JOIN` / `ASOF SEMI JOIN` — absorb a
+                    // following second strictness keyword too.
+                    if self.check_keyword("SEMI")
+                        || self.check_keyword("ANTI")
+                        || self.check_keyword("ASOF")
+                    {
+                        self.advance();
+                    }
+                    true
+                } else {
+                    _global_prefix
+                };
             // If the strictness modifier wasn't followed by a join keyword,
             // rewind so we don't accidentally consume a stray ALL/ANY (e.g.
             // `ORDER BY ALL`).
@@ -3785,6 +3812,7 @@ impl Parser {
                 t if matches!(t, TokenType::Identifier)
                     && self.peek().value.eq_ignore_ascii_case("NATURAL") =>
                 {
+                    self.unmodeled_syntax += 1;
                     self.advance(); // NATURAL
                     let jt = match self.peek_type() {
                         TokenType::Left => {
@@ -3815,6 +3843,7 @@ impl Parser {
                 t if matches!(t, TokenType::Identifier)
                     && self.peek().value.eq_ignore_ascii_case("STRAIGHT_JOIN") =>
                 {
+                    self.unmodeled_syntax += 1;
                     self.advance();
                     JoinType::Inner
                 }
@@ -4243,9 +4272,7 @@ impl Parser {
         // Swallow opaquely; we don't model conflict resolution at the
         // statement level (ON CONFLICT covers most cases downstream).
         if self.match_token(TokenType::Or) {
-            if self.match_token(TokenType::Replace) {
-                // matched
-            } else if self.match_token(TokenType::Ignore) {
+            if self.match_token(TokenType::Replace) || self.match_token(TokenType::Ignore) {
                 // matched
             } else if self.is_name_token() {
                 let v = self.peek().value.to_uppercase();
@@ -5076,6 +5103,92 @@ impl Parser {
 
     // ── CREATE ──────────────────────────────────────────────────────
 
+    fn parse_ctas_properties(&mut self) -> Result<Vec<TableProperty>> {
+        let next = self.tokens[self.pos..].iter().find(|token| {
+            !matches!(
+                token.token_type,
+                TokenType::LineComment | TokenType::BlockComment
+            )
+        });
+        if !next.is_some_and(|token| token.token_type == TokenType::With) {
+            return Ok(Vec::new());
+        }
+
+        // TableProperty has no comments field; attach comments to the query
+        self.collect_comments();
+        self.advance(); // WITH
+        self.collect_comments();
+        self.expect(TokenType::LParen)?;
+        let mut properties = Vec::new();
+        loop {
+            self.collect_comments();
+            let (name, quote_style) = self.expect_name_with_quote()?;
+            self.collect_comments();
+            self.expect(TokenType::Eq)?;
+            self.collect_comments();
+            let value = self.parse_expr()?;
+            properties.push(TableProperty {
+                name,
+                quote_style,
+                value,
+            });
+            self.collect_comments();
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenType::RParen)?;
+        self.collect_comments();
+        Ok(properties)
+    }
+
+    fn parse_ctas_data_clause(&mut self) -> Option<bool> {
+        // A following CTE may be named DATA; match the whole clause first
+        let mut tokens = self.tokens[self.pos..].iter().filter(|token| {
+            !matches!(
+                token.token_type,
+                TokenType::LineComment | TokenType::BlockComment
+            )
+        });
+        if !matches!(
+            tokens.next().map(|token| &token.token_type),
+            Some(TokenType::With)
+        ) {
+            return None;
+        }
+        let is_keyword = |token: &Token, word: &str| {
+            token.token_type == TokenType::Identifier
+                && token.quote_char == '\0'
+                && token.value.eq_ignore_ascii_case(word)
+        };
+        let next = tokens.next()?;
+        let populate = if is_keyword(next, "DATA") {
+            true
+        } else if is_keyword(next, "NO")
+            && tokens.next().is_some_and(|token| is_keyword(token, "DATA"))
+        {
+            false
+        } else {
+            return None;
+        };
+        if !tokens
+            .next()
+            .is_some_and(|token| matches!(token.token_type, TokenType::Eof | TokenType::Semicolon))
+        {
+            return None;
+        }
+
+        self.collect_comments();
+        self.advance(); // WITH
+        self.collect_comments();
+        if !populate {
+            self.advance(); // NO
+            self.collect_comments();
+        }
+        self.advance(); // DATA
+        Some(populate)
+    }
+
     fn parse_create(&mut self) -> Result<Statement> {
         self.expect(TokenType::Create)?;
 
@@ -5109,9 +5222,46 @@ impl Parser {
 
         let table = self.parse_table_ref_no_alias()?;
 
+        let syntax_before = self.unmodeled_syntax;
+        let with_properties = self.parse_ctas_properties()?;
+        let is_ctas = if with_properties.is_empty() {
+            self.match_token(TokenType::As)
+        } else {
+            self.expect(TokenType::As)?;
+            true
+        };
+
         // CREATE TABLE ... AS SELECT ...
-        if self.match_token(TokenType::As) {
-            let query = self.parse_statement_inner()?;
+        if is_ctas {
+            let mut query = self.parse_statement_inner()?;
+            let with_data = self.parse_ctas_data_clause();
+            if self.unmodeled_syntax != syntax_before {
+                return Err(SqlglotError::ParserError {
+                    message: "CTAS contains query syntax without an AST representation".into(),
+                });
+            }
+            if !with_properties.is_empty() || with_data.is_some() {
+                // CTAS clauses must stay separate from unparsed query text
+                let query_comments = match &mut query {
+                    Statement::Select(select) => &mut select.comments,
+                    Statement::SetOperation(set) => &mut set.comments,
+                    _ => {
+                        return Err(SqlglotError::ParserError {
+                            message: "CTAS query has no structured representation".into(),
+                        });
+                    }
+                };
+                self.collect_comments();
+                query_comments.extend(self.take_comments());
+                if or_replace
+                    || materialized
+                    || !matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon)
+                {
+                    return Err(SqlglotError::ParserError {
+                        message: "CTAS contains syntax without an AST representation".into(),
+                    });
+                }
+            }
             // Greenplum / Citus / etc. trailing `DISTRIBUTED BY (...)` /
             // `DISTRIBUTED RANDOMLY` / `DISTRIBUTED REPLICATED`. Swallow.
             if self.check_keyword("DISTRIBUTED") {
@@ -5148,7 +5298,9 @@ impl Parser {
                 table,
                 columns: vec![],
                 constraints: vec![],
+                with_properties,
                 as_select: Some(Box::new(query)),
+                with_data,
             }));
         }
 
@@ -5192,7 +5344,9 @@ impl Parser {
             table,
             columns,
             constraints,
+            with_properties,
             as_select: None,
+            with_data: None,
         }))
     }
 
@@ -6256,14 +6410,13 @@ impl Parser {
         // Tolerate Doris / StarRocks / Oracle trailing modifiers on DROP TABLE
         // (`FORCE`, `PURGE`, `RESTRICT`).
         while !matches!(self.peek_type(), TokenType::Eof | TokenType::Semicolon) {
-            if self.is_name_token()
+            if (self.is_name_token()
                 && matches!(
                     self.peek().value.to_uppercase().as_str(),
                     "FORCE" | "PURGE" | "RESTRICT"
-                )
+                ))
+                || matches!(self.peek_type(), TokenType::Restrict)
             {
-                self.advance();
-            } else if matches!(self.peek_type(), TokenType::Restrict) {
                 self.advance();
             } else {
                 break;
@@ -7064,8 +7217,12 @@ impl Parser {
                     if negative
                         || !matches!(
                             self.peek_type(),
-                            TokenType::Eq | TokenType::Lt | TokenType::Gt
-                                | TokenType::LtEq | TokenType::GtEq | TokenType::BitwiseNot
+                            TokenType::Eq
+                                | TokenType::Lt
+                                | TokenType::Gt
+                                | TokenType::LtEq
+                                | TokenType::GtEq
+                                | TokenType::BitwiseNot
                         )
                     {
                         let insensitive = fused_insensitive || self.match_token(TokenType::Star);
@@ -7074,7 +7231,8 @@ impl Parser {
                             func: TypedFunction::RegexpLike {
                                 expr: Box::new(left),
                                 pattern: Box::new(pattern),
-                                flags: insensitive.then(|| Box::new(Expr::StringLiteral("i".into()))),
+                                flags: insensitive
+                                    .then(|| Box::new(Expr::StringLiteral("i".into()))),
                             },
                             filter: None,
                             over: None,
@@ -7239,15 +7397,13 @@ impl Parser {
                 }
             } else if matches!(
                 self.peek_type(),
-                TokenType::In
-                    | TokenType::Like
-                    | TokenType::ILike
-                    | TokenType::Between
+                TokenType::In | TokenType::Like | TokenType::ILike | TokenType::Between
             ) || (self.peek_type() == &TokenType::Not
                 && matches!(
                     self.tokens.get(self.pos + 1).map(|token| &token.token_type),
                     Some(TokenType::In | TokenType::Like | TokenType::ILike | TokenType::Between)
-                )) {
+                ))
+            {
                 // Peek ahead: if NOT, only consume it if followed by IN/LIKE/ILIKE/BETWEEN
                 if self.peek_type() == &TokenType::Not {
                     let saved_pos = self.pos;
@@ -8272,10 +8428,10 @@ impl Parser {
                         // qualifier precision: `SECOND(2)`
                         if matches!(self.peek_type(), TokenType::Number) {
                             self.advance();
-                            if self.match_token(TokenType::Comma) {
-                                if matches!(self.peek_type(), TokenType::Number) {
-                                    self.advance();
-                                }
+                            if self.match_token(TokenType::Comma)
+                                && matches!(self.peek_type(), TokenType::Number)
+                            {
+                                self.advance();
                             }
                         }
                         let _ = self.match_token(TokenType::RParen);
@@ -8457,11 +8613,10 @@ impl Parser {
                             | TokenType::Minute
                             | TokenType::Second
                             | TokenType::End
+                            | TokenType::Number
+                            | TokenType::Int
                     )
                 {
-                    let nt = self.advance().clone();
-                    name.push_str(&nt.value);
-                } else if matches!(self.peek_type(), TokenType::Number | TokenType::Int) {
                     let nt = self.advance().clone();
                     name.push_str(&nt.value);
                 }
@@ -9372,18 +9527,16 @@ impl Parser {
                             let _ = self.match_token(TokenType::Colon);
                             // ClickHouse tuple index (`t.1`): treat number as
                             // a synthetic field name.
-                            let (next_col, next_qs) =
-                                if matches!(self.peek_type(), TokenType::Number) {
-                                    let v = self.peek().value.clone();
-                                    self.advance();
-                                    (v, QuoteStyle::None)
-                                } else if matches!(self.peek_type(), TokenType::Null) {
-                                    let v = self.peek().value.clone();
-                                    self.advance();
-                                    (v, QuoteStyle::None)
-                                } else {
-                                    self.expect_name_with_quote()?
-                                };
+                            let (next_col, next_qs) = if matches!(
+                                self.peek_type(),
+                                TokenType::Number | TokenType::Null
+                            ) {
+                                let v = self.peek().value.clone();
+                                self.advance();
+                                (v, QuoteStyle::None)
+                            } else {
+                                self.expect_name_with_quote()?
+                            };
                             table.push('.');
                             table.push_str(&col);
                             table_qs = col_qs;
@@ -9784,10 +9937,10 @@ impl Parser {
         // `JSON_VALUE(... RETURNING type DEFAULT v ON EMPTY|ERROR …)`. After
         // any RETURNING clause, swallow the optional FORMAT, DEFAULT, ON
         // EMPTY/ERROR tail so the call parses cleanly.
-        if self.match_token(TokenType::Returning) {
-            if self.is_data_type_token() || self.is_name_token() {
-                let _ = self.parse_data_type();
-            }
+        if self.match_token(TokenType::Returning)
+            && (self.is_data_type_token() || self.is_name_token())
+        {
+            let _ = self.parse_data_type();
         }
         // SQL/JSON `PASSING v AS name [, v AS name]*` clause inside
         // JSON_EXISTS / JSON_VALUE / JSON_QUERY argument lists.
@@ -9848,10 +10001,8 @@ impl Parser {
             }
         }
         // MySQL `CONVERT(expr USING charset)` — swallow USING + name.
-        if self.match_token(TokenType::Using) {
-            if self.is_name_token() {
-                self.advance();
-            }
+        if self.match_token(TokenType::Using) && self.is_name_token() {
+            self.advance();
         }
         // ON EMPTY / ON ERROR / DEFAULT … ON EMPTY|ERROR / FORMAT … —
         // tolerated tail clauses common to JSON_VALUE / JSON_QUERY /
@@ -10747,6 +10898,29 @@ impl Parser {
     }
 }
 
+/// Attach comments to the appropriate field on a parsed statement.
+fn attach_comments_to_statement(stmt: &mut Statement, comments: Vec<String>) {
+    match stmt {
+        Statement::Select(s) => s.comments = comments,
+        Statement::Insert(s) => s.comments = comments,
+        Statement::Update(s) => s.comments = comments,
+        Statement::Delete(s) => s.comments = comments,
+        Statement::CreateTable(s) => s.comments = comments,
+        Statement::DropTable(s) => s.comments = comments,
+        Statement::SetOperation(s) => s.comments = comments,
+        Statement::AlterTable(s) => s.comments = comments,
+        Statement::CreateView(s) => s.comments = comments,
+        Statement::DropView(s) => s.comments = comments,
+        Statement::Truncate(s) => s.comments = comments,
+        Statement::Explain(s) => s.comments = comments,
+        Statement::Use(s) => s.comments = comments,
+        Statement::Merge(s) => s.comments = comments,
+        Statement::Command(s) => s.comments = comments,
+        // Transaction and Expression don't have comment fields
+        Statement::Transaction(_) | Statement::Expression(_) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -11040,6 +11214,35 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ctas_property_values() {
+        let stmt = Parser::new(
+            "CREATE TABLE t WITH (\"format\" = 'ORC', delete_after_commit_enabled = true, max_commit_retry = 8) AS SELECT id FROM source",
+        )
+        .unwrap()
+        .parse_statement()
+        .unwrap();
+        let Statement::CreateTable(table) = stmt else {
+            panic!("expected CREATE TABLE");
+        };
+        assert_eq!(table.with_properties.len(), 3);
+        assert_eq!(table.with_properties[0].name, "format");
+        assert_eq!(
+            table.with_properties[0].quote_style,
+            QuoteStyle::DoubleQuote
+        );
+        assert_eq!(
+            table.with_properties[0].value,
+            Expr::StringLiteral("ORC".into())
+        );
+        assert_eq!(table.with_properties[1].value, Expr::Boolean(true));
+        assert_eq!(table.with_properties[2].value, Expr::Number("8".into()));
+        assert!(matches!(
+            table.as_select.as_deref(),
+            Some(Statement::Select(_))
+        ));
+    }
+
+    #[test]
     fn test_parse_extract() {
         let stmt = Parser::new("SELECT EXTRACT(YEAR FROM created_at) FROM t")
             .unwrap()
@@ -11130,28 +11333,5 @@ mod tests {
             let out = crate::generate(&stmt, crate::Dialect::Postgres);
             assert_eq!(out, expected_pg, "round-trip for {sql}");
         }
-    }
-}
-
-/// Attach comments to the appropriate field on a parsed statement.
-fn attach_comments_to_statement(stmt: &mut Statement, comments: Vec<String>) {
-    match stmt {
-        Statement::Select(s) => s.comments = comments,
-        Statement::Insert(s) => s.comments = comments,
-        Statement::Update(s) => s.comments = comments,
-        Statement::Delete(s) => s.comments = comments,
-        Statement::CreateTable(s) => s.comments = comments,
-        Statement::DropTable(s) => s.comments = comments,
-        Statement::SetOperation(s) => s.comments = comments,
-        Statement::AlterTable(s) => s.comments = comments,
-        Statement::CreateView(s) => s.comments = comments,
-        Statement::DropView(s) => s.comments = comments,
-        Statement::Truncate(s) => s.comments = comments,
-        Statement::Explain(s) => s.comments = comments,
-        Statement::Use(s) => s.comments = comments,
-        Statement::Merge(s) => s.comments = comments,
-        Statement::Command(s) => s.comments = comments,
-        // Transaction and Expression don't have comment fields
-        Statement::Transaction(_) | Statement::Expression(_) => {}
     }
 }

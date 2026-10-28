@@ -530,10 +530,10 @@ fn infer_type<S: Schema>(
                     result_types.push(t);
                 }
             }
-            if let Some(el) = else_clause {
-                if let Some(t) = ann.get_type(el.as_ref()) {
-                    result_types.push(t);
-                }
+            if let Some(el) = else_clause
+                && let Some(t) = ann.get_type(el.as_ref())
+            {
+                result_types.push(t);
             }
             common_type(&result_types)
         }
@@ -548,10 +548,10 @@ fn infer_type<S: Schema>(
             if let Some(t) = ann.get_type(true_val) {
                 types.push(t);
             }
-            if let Some(fv) = false_val {
-                if let Some(t) = ann.get_type(fv.as_ref()) {
-                    types.push(t);
-                }
+            if let Some(fv) = false_val
+                && let Some(t) = ann.get_type(fv.as_ref())
+            {
+                types.push(t);
             }
             common_type(&types)
         }
@@ -734,7 +734,7 @@ fn infer_generic_function_type<S: Schema>(
         "SUM" => args
             .first()
             .and_then(|a| ann.get_type(a))
-            .map(|t| coerce_sum_type(t)),
+            .map(coerce_sum_type),
         "AVG" => Some(DataType::Double),
         "MIN" | "MAX" => args.first().and_then(|a| ann.get_type(a)).cloned(),
         "VARIANCE" | "VAR_SAMP" | "VAR_POP" | "STDDEV" | "STDDEV_SAMP" | "STDDEV_POP" => {
@@ -908,7 +908,7 @@ fn infer_typed_function_type(func: &TypedFunction, ann: &TypeAnnotations) -> Opt
 
         // ── Aggregates ───────────────────────────────────────────────
         TypedFunction::Count { .. } => Some(DataType::BigInt),
-        TypedFunction::Sum { expr, .. } => ann.get_type(expr.as_ref()).map(|t| coerce_sum_type(t)),
+        TypedFunction::Sum { expr, .. } => ann.get_type(expr.as_ref()).map(coerce_sum_type),
         TypedFunction::Avg { .. } => Some(DataType::Double),
         TypedFunction::Min { expr } | TypedFunction::Max { expr } => {
             ann.get_type(expr.as_ref()).cloned()
@@ -993,10 +993,10 @@ fn infer_typed_function_type(func: &TypedFunction, ann: &TypeAnnotations) -> Opt
 
 fn infer_subquery_type(sub: &Statement, ann: &TypeAnnotations) -> Option<DataType> {
     // The type of a scalar subquery is the type of its single output column
-    if let Statement::Select(sel) = sub {
-        if let Some(SelectItem::Expr { expr, .. }) = sel.columns.first() {
-            return ann.get_type(expr).cloned();
-        }
+    if let Statement::Select(sel) = sub
+        && let Some(SelectItem::Expr { expr, .. }) = sel.columns.first()
+    {
+        return ann.get_type(expr).cloned();
     }
     None
 }
@@ -1173,10 +1173,10 @@ mod tests {
 
     /// Helper: get the type of the first SELECT column
     fn first_col_type(stmt: &Statement, ann: &TypeAnnotations) -> Option<DataType> {
-        if let Statement::Select(sel) = stmt {
-            if let Some(SelectItem::Expr { expr, .. }) = sel.columns.first() {
-                return ann.get_type(expr).cloned();
-            }
+        if let Statement::Select(sel) = stmt
+            && let Some(SelectItem::Expr { expr, .. }) = sel.columns.first()
+        {
+            return ann.get_type(expr).cloned();
         }
         None
     }
@@ -1456,10 +1456,10 @@ mod tests {
             .parse_statement()
             .unwrap();
         let ann = annotate_types(&stmt, &schema);
-        if let Statement::Select(sel) = &stmt {
-            if let Some(wh) = &sel.where_clause {
-                assert_eq!(ann.get_type(wh), Some(&DataType::Boolean));
-            }
+        if let Statement::Select(sel) = &stmt
+            && let Some(wh) = &sel.where_clause
+        {
+            assert_eq!(ann.get_type(wh), Some(&DataType::Boolean));
         }
     }
 

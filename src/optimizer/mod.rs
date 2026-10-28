@@ -62,37 +62,37 @@ fn fold_expr(expr: Expr) -> Expr {
             let right = fold_expr(*right);
 
             // Try numeric folding
-            if let (Expr::Number(l), Expr::Number(r)) = (&left, &right) {
-                if let (Ok(lv), Ok(rv)) = (l.parse::<f64>(), r.parse::<f64>()) {
-                    let result = match op {
-                        BinaryOperator::Plus => Some(lv + rv),
-                        BinaryOperator::Minus => Some(lv - rv),
-                        BinaryOperator::Multiply => Some(lv * rv),
-                        BinaryOperator::Divide if rv != 0.0 => Some(lv / rv),
-                        BinaryOperator::Modulo if rv != 0.0 => Some(lv % rv),
-                        _ => None,
-                    };
-                    if let Some(val) = result {
-                        // Emit integer if it's a whole number
-                        if val.fract() == 0.0 && val.abs() < i64::MAX as f64 {
-                            return Expr::Number(format!("{}", val as i64));
-                        }
-                        return Expr::Number(format!("{val}"));
+            if let (Expr::Number(l), Expr::Number(r)) = (&left, &right)
+                && let (Ok(lv), Ok(rv)) = (l.parse::<f64>(), r.parse::<f64>())
+            {
+                let result = match op {
+                    BinaryOperator::Plus => Some(lv + rv),
+                    BinaryOperator::Minus => Some(lv - rv),
+                    BinaryOperator::Multiply => Some(lv * rv),
+                    BinaryOperator::Divide if rv != 0.0 => Some(lv / rv),
+                    BinaryOperator::Modulo if rv != 0.0 => Some(lv % rv),
+                    _ => None,
+                };
+                if let Some(val) = result {
+                    // Emit integer if it's a whole number
+                    if val.fract() == 0.0 && val.abs() < i64::MAX as f64 {
+                        return Expr::Number(format!("{}", val as i64));
                     }
+                    return Expr::Number(format!("{val}"));
+                }
 
-                    // Try boolean folding for comparison
-                    let cmp = match op {
-                        BinaryOperator::Eq => Some(lv == rv),
-                        BinaryOperator::Neq => Some(lv != rv),
-                        BinaryOperator::Lt => Some(lv < rv),
-                        BinaryOperator::Gt => Some(lv > rv),
-                        BinaryOperator::LtEq => Some(lv <= rv),
-                        BinaryOperator::GtEq => Some(lv >= rv),
-                        _ => None,
-                    };
-                    if let Some(val) = cmp {
-                        return Expr::Boolean(val);
-                    }
+                // Try boolean folding for comparison
+                let cmp = match op {
+                    BinaryOperator::Eq => Some(lv == rv),
+                    BinaryOperator::Neq => Some(lv != rv),
+                    BinaryOperator::Lt => Some(lv < rv),
+                    BinaryOperator::Gt => Some(lv > rv),
+                    BinaryOperator::LtEq => Some(lv <= rv),
+                    BinaryOperator::GtEq => Some(lv >= rv),
+                    _ => None,
+                };
+                if let Some(val) = cmp {
+                    return Expr::Boolean(val);
                 }
             }
 
@@ -124,14 +124,14 @@ fn fold_expr(expr: Expr) -> Expr {
             expr,
         } => {
             let inner = fold_expr(*expr);
-            if let Expr::Number(ref n) = inner {
-                if let Ok(v) = n.parse::<f64>() {
-                    let neg = -v;
-                    if neg.fract() == 0.0 && neg.abs() < i64::MAX as f64 {
-                        return Expr::Number(format!("{}", neg as i64));
-                    }
-                    return Expr::Number(format!("{neg}"));
+            if let Expr::Number(ref n) = inner
+                && let Ok(v) = n.parse::<f64>()
+            {
+                let neg = -v;
+                if neg.fract() == 0.0 && neg.abs() < i64::MAX as f64 {
+                    return Expr::Number(format!("{}", neg as i64));
                 }
+                return Expr::Number(format!("{neg}"));
             }
             Expr::UnaryOp {
                 op: UnaryOperator::Minus,
@@ -263,10 +263,10 @@ mod tests {
     #[test]
     fn test_constant_folding() {
         let stmt = optimize_sql("SELECT 1 + 2 FROM t");
-        if let Statement::Select(sel) = stmt {
-            if let SelectItem::Expr { expr, .. } = &sel.columns[0] {
-                assert_eq!(*expr, Expr::Number("3".to_string()));
-            }
+        if let Statement::Select(sel) = stmt
+            && let SelectItem::Expr { expr, .. } = &sel.columns[0]
+        {
+            assert_eq!(*expr, Expr::Number("3".to_string()));
         }
     }
 

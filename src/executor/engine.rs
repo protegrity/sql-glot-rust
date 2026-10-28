@@ -577,12 +577,12 @@ impl<'a> ExecutionContext<'a> {
                 .iter()
                 .map(|item| {
                     // Support ORDER BY <position>.
-                    if let Expr::Number(n) = &item.expr {
-                        if let Ok(pos) = n.parse::<usize>() {
-                            if pos > 0 && pos <= row_ctx.values.len() {
-                                return Ok(row_ctx.values[pos - 1].clone());
-                            }
-                        }
+                    if let Expr::Number(n) = &item.expr
+                        && let Ok(pos) = n.parse::<usize>()
+                        && pos > 0
+                        && pos <= row_ctx.values.len()
+                    {
+                        return Ok(row_ctx.values[pos - 1].clone());
                     }
                     eval::eval_expr(&item.expr, row_ctx, self.tables, &self.ctes)
                 })
