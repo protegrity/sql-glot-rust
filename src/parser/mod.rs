@@ -14,7 +14,8 @@ use crate::errors::Result;
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if the input
 /// is not valid SQL.
 pub fn parse(sql: &str, dialect: Dialect) -> Result<Statement> {
-    let mut parser = Parser::new_with_bracket_identifiers(sql, is_tsql_family(dialect))?;
+    let mut parser =
+        Parser::new_with_bracket_identifiers(sql, is_tsql_family(dialect))?.with_dialect(dialect);
     parser.parse_statement()
 }
 
@@ -55,7 +56,8 @@ pub(crate) fn parse_schema_data_type(sql: &str, dialect: Dialect) -> Result<Data
 /// is not valid SQL.
 pub fn parse_with_comments(sql: &str, dialect: Dialect) -> Result<Statement> {
     let mut parser =
-        Parser::new_with_comments_and_bracket_identifiers(sql, is_tsql_family(dialect))?;
+        Parser::new_with_comments_and_bracket_identifiers(sql, is_tsql_family(dialect))?
+            .with_dialect(dialect);
     parser.parse_statement()
 }
 
@@ -65,7 +67,8 @@ pub fn parse_with_comments(sql: &str, dialect: Dialect) -> Result<Statement> {
 ///
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if parsing fails.
 pub fn parse_statements(sql: &str, dialect: Dialect) -> Result<Vec<Statement>> {
-    let mut parser = Parser::new_with_bracket_identifiers(sql, is_tsql_family(dialect))?;
+    let mut parser =
+        Parser::new_with_bracket_identifiers(sql, is_tsql_family(dialect))?.with_dialect(dialect);
     parser.parse_statements()
 }
 
@@ -76,7 +79,8 @@ pub fn parse_statements(sql: &str, dialect: Dialect) -> Result<Vec<Statement>> {
 /// Returns a [`SqlglotError`](crate::errors::SqlglotError) if parsing fails.
 pub fn parse_statements_with_comments(sql: &str, dialect: Dialect) -> Result<Vec<Statement>> {
     let mut parser =
-        Parser::new_with_comments_and_bracket_identifiers(sql, is_tsql_family(dialect))?;
+        Parser::new_with_comments_and_bracket_identifiers(sql, is_tsql_family(dialect))?
+            .with_dialect(dialect);
     parser.parse_statements()
 }
 

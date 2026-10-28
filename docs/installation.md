@@ -25,7 +25,7 @@ Add `sqlglot-rust` to your project's `Cargo.toml`:
 
 ```toml
 [dependencies]
-sqlglot-rust = "0.11.0"
+sqlglot-rust = "0.11.1"
 ```
 
 Then run:
@@ -164,3 +164,27 @@ for usage examples.
   working with the AST, optimization, and serialization with full code examples.
 - **[Reference](reference.md)** — Complete API surface, type catalog, dialect
   tables, and error variants.
+
+### SQLite and MySQL operator precedence (0.11.1)
+
+Version 0.11.1 fixes mixed arithmetic, bitwise, and concatenation grouping for
+SQLite and MySQL ([#39](https://github.com/protegrity/sql-glot-rust/issues/39)).
+Parsing now retains the source dialect, and generation for these targets adds
+parentheses when needed to preserve the AST, including cross-dialect output.
+For example, MySQL `1 | 2 & 4` becomes SQLite `1 | (2 & 4)`.
+
+MySQL parsing assumes the default SQL mode: `||` means logical OR. Concatenation
+AST nodes are emitted as `CONCAT(...)` for MySQL. `PIPES_AS_CONCAT` is not
+configurable through the parser. Other dialects retain their existing parsing
+rules; this release does not claim complete precedence conformance for every
+SQL operator or SQL mode.
+
+The engine regression checks can be run after building the CLI:
+
+```bash
+cargo build --locked --features cli --bin sqlglot
+python3 scripts/operator_precedence.py --binary target/debug/sqlglot
+# Include a local MySQL server (the harness only executes SELECT statements):
+python3 scripts/operator_precedence.py --binary target/debug/sqlglot \
+  --mysql-command mysql --host=127.0.0.1 --user=root
+```

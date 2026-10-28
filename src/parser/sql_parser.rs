@@ -1,5 +1,7 @@
 use crate::ast::*;
+use crate::dialects::Dialect;
 use crate::errors::{Result, SqlglotError};
+use crate::precedence::arithmetic_precedence;
 use crate::tokens::{Token, TokenType, Tokenizer};
 
 /// Convert a token's `quote_char` into a `QuoteStyle`.
@@ -17,6 +19,7 @@ fn quote_style_from_char(c: char) -> QuoteStyle {
 /// Supports CTEs (WITH), subqueries, UNION/INTERSECT/EXCEPT, CAST,
 /// window functions (OVER), EXISTS, EXTRACT, INTERVAL, and more.
 pub struct Parser {
+    dialect: Dialect,
     tokens: Vec<Token>,
     pos: usize,
     /// Whether to preserve comments during parsing.
@@ -35,6 +38,7 @@ impl Parser {
         let mut tokenizer = Tokenizer::new(sql);
         let tokens = tokenizer.tokenize()?;
         Ok(Self {
+            dialect: Dialect::Ansi,
             tokens,
             pos: 0,
             preserve_comments: false,
@@ -48,6 +52,7 @@ impl Parser {
         let mut tokenizer = Tokenizer::with_comments(sql);
         let tokens = tokenizer.tokenize()?;
         Ok(Self {
+            dialect: Dialect::Ansi,
             tokens,
             pos: 0,
             preserve_comments: true,
@@ -63,6 +68,7 @@ impl Parser {
         let mut tokenizer = Tokenizer::new(sql).with_bracket_identifiers(brackets_are_identifiers);
         let tokens = tokenizer.tokenize()?;
         Ok(Self {
+            dialect: Dialect::Ansi,
             tokens,
             pos: 0,
             preserve_comments: false,
@@ -81,12 +87,19 @@ impl Parser {
             Tokenizer::with_comments(sql).with_bracket_identifiers(brackets_are_identifiers);
         let tokens = tokenizer.tokenize()?;
         Ok(Self {
+            dialect: Dialect::Ansi,
             tokens,
             pos: 0,
             preserve_comments: true,
             pending_comments: Vec::new(),
             unmodeled_syntax: 0,
         })
+    }
+
+    /// Select expression precedence without changing the legacy constructors.
+    pub(crate) fn with_dialect(mut self, dialect: Dialect) -> Self {
+        self.dialect = dialect;
+        self
     }
 
     // ── Comment helpers ────────────────────────────────────────────
@@ -7044,7 +7057,9 @@ impl Parser {
 
     fn parse_or_expr(&mut self) -> Result<Expr> {
         let mut left = self.parse_and_expr()?;
-        while self.match_token(TokenType::Or) {
+        while self.match_token(TokenType::Or)
+            || (self.dialect == Dialect::Mysql && self.match_token(TokenType::Concat))
+        {
             let right = self.parse_and_expr()?;
             left = Expr::BinaryOp {
                 left: Box::new(left),
@@ -7055,9 +7070,25 @@ impl Parser {
         Ok(left)
     }
 
+    fn is_mysql_logical_and(&self) -> bool {
+        self.dialect == Dialect::Mysql
+            && self.peek_type() == &TokenType::BitwiseAnd
+            && self
+                .peek_offset(1)
+                .is_some_and(|t| t.token_type == TokenType::BitwiseAnd)
+    }
+
     fn parse_and_expr(&mut self) -> Result<Expr> {
         let mut left = self.parse_not_expr()?;
-        while self.match_token(TokenType::And) {
+        loop {
+            if !self.match_token(TokenType::And) {
+                if self.is_mysql_logical_and() {
+                    self.advance();
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
             let right = self.parse_not_expr()?;
             left = Expr::BinaryOp {
                 left: Box::new(left),
@@ -7084,6 +7115,10 @@ impl Parser {
         let mut left = self.parse_addition()?;
 
         loop {
+            // MySQL && is logical AND, not a PostgreSQL overlap operator.
+            if self.is_mysql_logical_and() {
+                break;
+            }
             // ClickHouse distributed predicates: `expr GLOBAL [NOT] IN (...)`
             // and `expr GLOBAL JOIN ...`. The keyword tokenizes as a plain
             // identifier — swallow it so the following predicate parses.
@@ -7584,7 +7619,51 @@ impl Parser {
         Ok(left)
     }
 
+    /// Precedence climbing for SQLite/MySQL arithmetic and bitwise operators.
+    /// All operators in this layer associate left-to-right. Other dialects keep
+    /// their existing parser, including its PostgreSQL composite-operator guards.
+    fn parse_dialect_arithmetic(&mut self, minimum: u8) -> Result<Expr> {
+        let mut left = self.parse_unary()?;
+        loop {
+            let op = match self.peek_type() {
+                TokenType::Plus => BinaryOperator::Plus,
+                TokenType::Minus => BinaryOperator::Minus,
+                TokenType::Star => BinaryOperator::Multiply,
+                TokenType::Slash => BinaryOperator::Divide,
+                TokenType::Percent2 => BinaryOperator::Modulo,
+                TokenType::Concat if self.dialect == Dialect::Sqlite => BinaryOperator::Concat,
+                // Leave MySQL's && for the lower-precedence logical AND layer.
+                TokenType::BitwiseAnd if self.is_mysql_logical_and() => break,
+                TokenType::BitwiseAnd => BinaryOperator::BitwiseAnd,
+                TokenType::BitwiseOr => BinaryOperator::BitwiseOr,
+                TokenType::BitwiseXor => BinaryOperator::BitwiseXor,
+                TokenType::ShiftLeft => BinaryOperator::ShiftLeft,
+                TokenType::ShiftRight => BinaryOperator::ShiftRight,
+                _ if self.check_keyword("DIV") => BinaryOperator::Divide,
+                _ if self.check_keyword("MOD") => BinaryOperator::Modulo,
+                _ => break,
+            };
+            let Some(precedence) = arithmetic_precedence(self.dialect, &op) else {
+                break;
+            };
+            if precedence < minimum {
+                break;
+            }
+            self.advance();
+            let right = self.parse_dialect_arithmetic(precedence + 1)?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
     fn parse_addition(&mut self) -> Result<Expr> {
+        if matches!(self.dialect, Dialect::Sqlite | Dialect::Mysql) {
+            return self.parse_dialect_arithmetic(0);
+        }
         let mut left = self.parse_multiplication()?;
         loop {
             let op = match self.peek_type() {

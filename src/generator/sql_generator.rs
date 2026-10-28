@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::dialects::Dialect;
+use crate::precedence::binary_precedence;
 
 /// SQL code generator that converts an AST into a SQL string.
 ///
@@ -2051,6 +2052,35 @@ impl Generator {
         }
     }
 
+    /// Keep implicit AST grouping when the target dialect binds differently.
+    /// Equal-precedence right children also need parentheses: reassociation is
+    /// unsafe for subtraction/division, mixed operators, and floating point.
+    fn gen_binary_operand(&mut self, expr: &Expr, parent: &BinaryOperator, right: bool) {
+        let mut inner = expr;
+        while let Expr::Commented { expr, .. } = inner {
+            inner = expr;
+        }
+        let wrap = match (self.dialect, inner) {
+            (Some(dialect @ (Dialect::Sqlite | Dialect::Mysql)), Expr::BinaryOp { op, .. }) => {
+                match (
+                    binary_precedence(dialect, parent),
+                    binary_precedence(dialect, op),
+                ) {
+                    (Some(parent), Some(child)) => child < parent || (right && child == parent),
+                    _ => true,
+                }
+            }
+            _ => false,
+        };
+        if wrap {
+            self.write("(");
+        }
+        self.gen_expr(expr);
+        if wrap {
+            self.write(")");
+        }
+    }
+
     fn gen_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Column {
@@ -2127,10 +2157,22 @@ impl Generator {
                 self.write(")");
             }
 
-            Expr::BinaryOp { left, op, right } => {
+            Expr::BinaryOp {
+                left,
+                op: BinaryOperator::Concat,
+                right,
+            } if self.dialect == Some(Dialect::Mysql) => {
+                // In MySQL's default SQL mode || means OR, not concatenation.
+                self.write("CONCAT(");
                 self.gen_expr(left);
-                self.write(Self::binary_op_str(op));
+                self.write(", ");
                 self.gen_expr(right);
+                self.write(")");
+            }
+            Expr::BinaryOp { left, op, right } => {
+                self.gen_binary_operand(left, op, false);
+                self.write(Self::binary_op_str(op));
+                self.gen_binary_operand(right, op, true);
             }
             Expr::AnyOp { expr, op, right } => {
                 self.gen_expr(expr);
