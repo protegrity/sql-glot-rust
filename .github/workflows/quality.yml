@@ -30,3 +30,30 @@ jobs:
         run: cargo test --locked --no-default-features
       - name: Check benchmark cases
         run: cargo bench --locked --bench parser_bench -- CTAS --test
+
+  operator-semantics:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - name: Install MySQL client
+        run: sudo apt-get update && sudo apt-get install -y mysql-client
+      - name: Build CLI
+        run: cargo build --locked --features cli --bin sqlglot
+      - name: Validate SQLite and MySQL operator semantics
+        run: >-
+          python3 scripts/operator_precedence.py --binary target/debug/sqlglot
+          --mysql-command mysql --protocol=tcp --host=127.0.0.1 --user=root

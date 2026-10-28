@@ -42,6 +42,7 @@ pub mod generator;
 pub mod optimizer;
 pub mod parser;
 pub mod planner;
+mod precedence;
 pub mod schema;
 pub mod tokens;
 
