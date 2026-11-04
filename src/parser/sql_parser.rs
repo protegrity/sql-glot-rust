@@ -4771,6 +4771,12 @@ impl Parser {
             None
         };
 
+        let joins = if from.is_some() {
+            self.parse_joins()?
+        } else {
+            vec![]
+        };
+
         let where_clause = if self.match_token(TokenType::Where) {
             Some(self.parse_expr()?)
         } else {
@@ -4812,6 +4818,7 @@ impl Parser {
             table,
             assignments,
             from,
+            joins,
             where_clause,
             returning,
         })

@@ -1064,6 +1064,11 @@ impl Generator {
             self.gen_table_source(&from.source);
         }
 
+        for join in &upd.joins {
+            self.sep();
+            self.gen_join(join);
+        }
+
         if let Some(wh) = &upd.where_clause {
             self.sep();
             self.write_keyword("WHERE");

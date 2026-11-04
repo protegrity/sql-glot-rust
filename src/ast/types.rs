@@ -1678,6 +1678,9 @@ pub struct UpdateStatement {
     pub table: TableRef,
     pub assignments: Vec<(String, Expr)>,
     pub from: Option<FromClause>,
+    /// Joins following the UPDATE FROM relation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joins: Vec<JoinClause>,
     pub where_clause: Option<Expr>,
     pub returning: Vec<SelectItem>,
 }
@@ -2774,7 +2777,16 @@ pub fn find_tables(statement: &Statement) -> Vec<&TableRef> {
             tables
         }
         Statement::Insert(ins) => vec![&ins.table],
-        Statement::Update(upd) => vec![&upd.table],
+        Statement::Update(upd) => {
+            let mut tables = vec![&upd.table];
+            if let Some(from) = &upd.from {
+                collect_table_refs_from_source(&from.source, &mut tables);
+            }
+            for join in &upd.joins {
+                collect_table_refs_from_source(&join.table, &mut tables);
+            }
+            tables
+        }
         Statement::Delete(del) => vec![&del.table],
         Statement::CreateTable(ct) => vec![&ct.table],
         Statement::DropTable(dt) => vec![&dt.table],

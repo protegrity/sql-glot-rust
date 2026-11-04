@@ -233,6 +233,16 @@ fn build_scope_inner(statement: &Statement, scope: &mut Scope, _scope_type: Scop
             }
         }
         Statement::Update(upd) => {
+            process_table_source(&TableSource::Table(upd.table.clone()), scope);
+            if let Some(from) = &upd.from {
+                process_table_source(&from.source, scope);
+            }
+            for join in &upd.joins {
+                process_table_source(&join.table, scope);
+                if let Some(on) = &join.on {
+                    collect_columns_from_expr(on, scope);
+                }
+            }
             // Collect columns from assignments and WHERE
             for (_col, expr) in &upd.assignments {
                 collect_columns_from_expr(expr, scope);

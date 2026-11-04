@@ -187,6 +187,16 @@ fn annotate_statement<S: Schema>(
             }
         }
         Statement::Update(upd) => {
+            register_table_source(&TableSource::Table(upd.table.clone()), ctx);
+            if let Some(from) = &upd.from {
+                register_table_source(&from.source, ctx);
+            }
+            for join in &upd.joins {
+                register_table_source(&join.table, ctx);
+                if let Some(on) = &join.on {
+                    annotate_expr(on, ctx, ann);
+                }
+            }
             for (_, expr) in &upd.assignments {
                 annotate_expr(expr, ctx, ann);
             }

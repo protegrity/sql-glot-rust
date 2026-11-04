@@ -733,6 +733,16 @@ fn transform_statement(statement: &mut Statement, target: Dialect) {
             }
         }
         Statement::Update(upd) => {
+            if let Some(from) = &mut upd.from {
+                transform_nested_table_source(&mut from.source, target);
+            }
+            for join in &mut upd.joins {
+                transform_nested_table_source(&mut join.table, target);
+                transform_quotes_in_table_source(&mut join.table, target);
+                if let Some(on) = &mut join.on {
+                    *on = transform_expr(on.clone(), target);
+                }
+            }
             for (_, val) in &mut upd.assignments {
                 *val = transform_expr(val.clone(), target);
             }

@@ -317,6 +317,15 @@ pub fn validate_dialect_support(stmt: &Statement, target: Dialect) -> errors::Re
                         .and_then(|from| unsupported_in_source(&from.source, target))
                 })
                 .or_else(|| {
+                    update.joins.iter().find_map(|join| {
+                        unsupported_in_source(&join.table, target).or_else(|| {
+                            join.on
+                                .as_ref()
+                                .and_then(|expr| unsupported_in_expr(expr, target))
+                        })
+                    })
+                })
+                .or_else(|| {
                     update
                         .where_clause
                         .as_ref()
