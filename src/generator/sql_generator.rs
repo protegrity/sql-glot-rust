@@ -3561,7 +3561,9 @@ impl Generator {
                 self.write(")");
             }
             TypedFunction::ArraySize { expr } => {
-                let name = if matches!(dialect, Some(Dialect::Postgres) | Some(Dialect::Redshift)) {
+                let name = if matches!(dialect, Some(Dialect::Postgres)) {
+                    "CARDINALITY"
+                } else if matches!(dialect, Some(Dialect::Redshift)) {
                     "ARRAY_LENGTH"
                 } else if is_hive_family {
                     "SIZE"
