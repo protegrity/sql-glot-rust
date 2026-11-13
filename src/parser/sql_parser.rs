@@ -10691,7 +10691,10 @@ impl Parser {
                     element: Box::new(element),
                 }
             }
-            "ARRAY_SIZE" | "ARRAY_LENGTH" | "CARDINALITY" => {
+            // ARRAY_LENGTH can address a specific dimension; ArraySize cannot
+            // represent that argument or its empty-array semantics. Keep it as
+            // a generic function so parse/generate never discards arguments.
+            "ARRAY_SIZE" | "CARDINALITY" if args.len() == 1 => {
                 let mut it = args.into_iter();
                 TypedFunction::ArraySize {
                     expr: Box::new(it.next()?),

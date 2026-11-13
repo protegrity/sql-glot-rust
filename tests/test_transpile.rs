@@ -2035,7 +2035,7 @@ fn test_typed_greatest_least() {
 fn test_typed_array_size_cross_dialect() {
     validate_with_dialect(
         "SELECT ARRAY_SIZE(arr) FROM t",
-        "SELECT ARRAY_LENGTH(arr) FROM t",
+        "SELECT CARDINALITY(arr) FROM t",
         Dialect::Snowflake,
         Dialect::Postgres,
     );
