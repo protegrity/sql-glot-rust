@@ -1,4 +1,4 @@
-use sqlglot_rust::{generate, parse, Dialect};
+use sqlglot_rust::{Dialect, generate, parse};
 
 #[test]
 fn postgres_array_dimensions_and_cardinality_survive_regeneration() {
@@ -24,6 +24,9 @@ fn unrecognized_array_arities_are_not_silently_truncated() {
         "SELECT ARRAY_SIZE(arr, 2) FROM t",
         "SELECT ARRAY_LENGTH(arr, 1, 2) FROM t",
     ] {
-        assert_eq!(generate(&parse(sql, Dialect::Postgres).unwrap(), Dialect::Postgres), sql);
+        assert_eq!(
+            generate(&parse(sql, Dialect::Postgres).unwrap(), Dialect::Postgres),
+            sql
+        );
     }
 }
