@@ -1984,6 +1984,15 @@ fn test_typed_window_with_filter() {
     validate_identity("SELECT SUM(amount) FILTER (WHERE status = 'paid') FROM orders");
 }
 
+#[test]
+fn test_groups_window_frame() {
+    validate_identity(
+        "SELECT SUM(n) OVER (ORDER BY k GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
+    );
+    // GROUPS is not reserved, so it stays usable as a name.
+    validate_identity("SELECT groups FROM t");
+}
+
 // ── Math typed functions ──
 
 #[test]

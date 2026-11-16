@@ -1072,6 +1072,7 @@ impl Tokenizer {
             "WINDOW" => TokenType::Window,
             "ROWS" => TokenType::Rows,
             "RANGE" => TokenType::Range,
+            "GROUPS" => TokenType::Groups,
             "UNBOUNDED" => TokenType::Unbounded,
             "PRECEDING" => TokenType::Preceding,
             "FOLLOWING" => TokenType::Following,
