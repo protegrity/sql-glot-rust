@@ -10838,12 +10838,18 @@ impl Parser {
                 }
             }
             "LOG" => {
+                // Two-argument LOG is LOG(base, expr).
                 let mut it = args.into_iter();
-                let expr = it.next()?;
-                let base = it.next();
-                TypedFunction::Log {
-                    expr: Box::new(expr),
-                    base: base.map(Box::new),
+                let first = it.next()?;
+                match it.next() {
+                    Some(expr) => TypedFunction::Log {
+                        expr: Box::new(expr),
+                        base: Some(Box::new(first)),
+                    },
+                    None => TypedFunction::Log {
+                        expr: Box::new(first),
+                        base: None,
+                    },
                 }
             }
             "LN" => {

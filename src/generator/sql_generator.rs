@@ -3730,18 +3730,11 @@ impl Generator {
             }
             TypedFunction::Log { expr, base } => {
                 if let Some(b) = base {
+                    // LOG(base, expr) on every dialect that takes two arguments.
                     self.write_keyword("LOG(");
-                    if matches!(dialect, Some(Dialect::Postgres) | Some(Dialect::DuckDb)) {
-                        // Postgres: LOG(base, expr)
-                        self.gen_expr(b);
-                        self.write(", ");
-                        self.gen_expr(expr);
-                    } else {
-                        // Most: LOG(expr, base)
-                        self.gen_expr(expr);
-                        self.write(", ");
-                        self.gen_expr(b);
-                    }
+                    self.gen_expr(b);
+                    self.write(", ");
+                    self.gen_expr(expr);
                     self.write(")");
                 } else {
                     // LOG(expr) — ln in Postgres, log10 in most others

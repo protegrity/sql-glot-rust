@@ -2013,6 +2013,23 @@ fn test_typed_math_functions_identity() {
 }
 
 #[test]
+fn test_typed_log_base_argument() {
+    // LOG(base, expr) is the order every dialect reads, so it must survive a transpile.
+    validate_with_dialect(
+        "SELECT LOG(2, 8) FROM t",
+        "SELECT LOG(2, 8) FROM t",
+        Dialect::Ansi,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT LOG(2, 8) FROM t",
+        "SELECT LOG(2, 8) FROM t",
+        Dialect::Postgres,
+        Dialect::Ansi,
+    );
+}
+
+#[test]
 fn test_typed_pow_cross_dialect() {
     validate_with_dialect(
         "SELECT POW(x, 2) FROM t",
