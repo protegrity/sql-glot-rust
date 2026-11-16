@@ -2715,7 +2715,19 @@ impl Generator {
                 self.write(name);
             }
             Expr::ArrayIndex { expr, index } => {
+                // PostgreSQL needs parentheses around any base that is not a plain
+                // column: `ARRAY_AGG(id)[1]` is a syntax error, `(ARRAY_AGG(id))[1]` is not.
+                let wrap = matches!(
+                    self.dialect,
+                    Some(Dialect::Postgres) | Some(Dialect::Redshift)
+                ) && !matches!(**expr, Expr::Column { .. } | Expr::Nested(_));
+                if wrap {
+                    self.write("(");
+                }
                 self.gen_expr(expr);
+                if wrap {
+                    self.write(")");
+                }
                 self.write("[");
                 self.gen_expr(index);
                 self.write("]");
