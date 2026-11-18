@@ -2,7 +2,7 @@ FROM rust:latest
 
 # Install tools needed for RPM testing + CA certs
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    rpm file ca-certificates \
+    rpm file ca-certificates clang lld \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
