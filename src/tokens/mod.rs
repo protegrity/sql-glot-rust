@@ -93,6 +93,7 @@ pub enum TokenType {
     Window,
     Rows,
     Range,
+    Groups,
     Unbounded,
     Preceding,
     Following,

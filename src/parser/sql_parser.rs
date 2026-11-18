@@ -621,6 +621,7 @@ impl Parser {
                 | TokenType::Unpivot
                 | TokenType::Sets
                 | TokenType::Range
+                | TokenType::Groups
                 | TokenType::Conflict
                 | TokenType::Unnest
                 | TokenType::Text
@@ -697,6 +698,7 @@ impl Parser {
                 | TokenType::Group
                 | TokenType::Order
                 | TokenType::Range
+                | TokenType::Groups
         );
         if !is_name_like {
             return Ok(None);
@@ -788,6 +790,7 @@ impl Parser {
                 | TokenType::Unpivot
                 | TokenType::Rows
                 | TokenType::Range
+                | TokenType::Groups
                 | TokenType::Values
         ) {
             let t = self.advance().clone();
@@ -8341,7 +8344,10 @@ impl Parser {
             vec![]
         };
 
-        let frame = if matches!(self.peek_type(), TokenType::Rows | TokenType::Range) {
+        let frame = if matches!(
+            self.peek_type(),
+            TokenType::Rows | TokenType::Range | TokenType::Groups
+        ) {
             Some(self.parse_window_frame()?)
         } else {
             None
@@ -8360,6 +8366,8 @@ impl Parser {
             WindowFrameKind::Rows
         } else if self.match_token(TokenType::Range) {
             WindowFrameKind::Range
+        } else if self.match_token(TokenType::Groups) {
+            WindowFrameKind::Groups
         } else {
             WindowFrameKind::Rows
         };
@@ -10830,12 +10838,18 @@ impl Parser {
                 }
             }
             "LOG" => {
+                // Two-argument LOG is LOG(base, expr).
                 let mut it = args.into_iter();
-                let expr = it.next()?;
-                let base = it.next();
-                TypedFunction::Log {
-                    expr: Box::new(expr),
-                    base: base.map(Box::new),
+                let first = it.next()?;
+                match it.next() {
+                    Some(expr) => TypedFunction::Log {
+                        expr: Box::new(expr),
+                        base: Some(Box::new(first)),
+                    },
+                    None => TypedFunction::Log {
+                        expr: Box::new(first),
+                        base: None,
+                    },
                 }
             }
             "LN" => {

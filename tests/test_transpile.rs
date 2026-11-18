@@ -1984,6 +1984,15 @@ fn test_typed_window_with_filter() {
     validate_identity("SELECT SUM(amount) FILTER (WHERE status = 'paid') FROM orders");
 }
 
+#[test]
+fn test_groups_window_frame() {
+    validate_identity(
+        "SELECT SUM(n) OVER (ORDER BY k GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
+    );
+    // GROUPS is not reserved, so it stays usable as a name.
+    validate_identity("SELECT groups FROM t");
+}
+
 // ── Math typed functions ──
 
 #[test]
@@ -2001,6 +2010,23 @@ fn test_typed_math_functions_identity() {
     for sql in &cases {
         validate_identity(sql);
     }
+}
+
+#[test]
+fn test_typed_log_base_argument() {
+    // LOG(base, expr) is the order every dialect reads, so it must survive a transpile.
+    validate_with_dialect(
+        "SELECT LOG(2, 8) FROM t",
+        "SELECT LOG(2, 8) FROM t",
+        Dialect::Ansi,
+        Dialect::Postgres,
+    );
+    validate_with_dialect(
+        "SELECT LOG(2, 8) FROM t",
+        "SELECT LOG(2, 8) FROM t",
+        Dialect::Postgres,
+        Dialect::Ansi,
+    );
 }
 
 #[test]

@@ -2715,7 +2715,19 @@ impl Generator {
                 self.write(name);
             }
             Expr::ArrayIndex { expr, index } => {
+                // PostgreSQL needs parentheses around any base that is not a plain
+                // column: `ARRAY_AGG(id)[1]` is a syntax error, `(ARRAY_AGG(id))[1]` is not.
+                let wrap = matches!(
+                    self.dialect,
+                    Some(Dialect::Postgres) | Some(Dialect::Redshift)
+                ) && !matches!(**expr, Expr::Column { .. } | Expr::Nested(_));
+                if wrap {
+                    self.write("(");
+                }
                 self.gen_expr(expr);
+                if wrap {
+                    self.write(")");
+                }
                 self.write("[");
                 self.gen_expr(index);
                 self.write("]");
@@ -3730,18 +3742,11 @@ impl Generator {
             }
             TypedFunction::Log { expr, base } => {
                 if let Some(b) = base {
+                    // LOG(base, expr) on every dialect that takes two arguments.
                     self.write_keyword("LOG(");
-                    if matches!(dialect, Some(Dialect::Postgres) | Some(Dialect::DuckDb)) {
-                        // Postgres: LOG(base, expr)
-                        self.gen_expr(b);
-                        self.write(", ");
-                        self.gen_expr(expr);
-                    } else {
-                        // Most: LOG(expr, base)
-                        self.gen_expr(expr);
-                        self.write(", ");
-                        self.gen_expr(b);
-                    }
+                    self.gen_expr(b);
+                    self.write(", ");
+                    self.gen_expr(expr);
                     self.write(")");
                 } else {
                     // LOG(expr) — ln in Postgres, log10 in most others
